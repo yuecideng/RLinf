@@ -114,8 +114,18 @@ def main(cfg) -> None:
 
     # Create env worker group
     env_placement = component_placement.get_strategy("env")
+    # DexSim's Vulkan renderer enumerates physical GPUs independently of
+    # CUDA_VISIBLE_DEVICES. EmbodiChain needs all GPUs visible so its
+    # physical accelerator rank can be passed to SimulationManagerCfg.gpu_id.
+    embodichain_env = any(
+        str(cfg.env[split].get("env_type", "")).lower() == "embodichain"
+        for split in ("train", "eval")
+    )
     env_group = EnvWorker.create_group(cfg).launch(
-        cluster, name=cfg.env.group_name, placement_strategy=env_placement
+        cluster,
+        name=cfg.env.group_name,
+        placement_strategy=env_placement,
+        isolate_gpu=not embodichain_env,
     )
 
     # Create reward worker group

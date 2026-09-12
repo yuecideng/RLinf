@@ -82,12 +82,29 @@ def _cfg_get(cfg: Any, key: str, default: Any = None) -> Any:
 def _resolve_sim_device_and_gpu_id(
     cfg: Any, worker_info: Any
 ) -> tuple[torch.device, int]:
+    """Resolve local CUDA compute and physical DexSim GPU devices.
+
+    RLinf normally isolates a worker with ``CUDA_VISIBLE_DEVICES``.  That
+    remaps the assigned CUDA device to ``cuda:0``, but DexSim's Vulkan device
+    enumeration remains physical.  EmbodiChain workers therefore run with
+    accelerator isolation disabled and use ``LOCAL_HARDWARE_RANKS`` for DexSim
+    while retaining the local CUDA device selected by RLinf.
+    """
     sim_device = torch.device(str(_cfg_get(cfg, "sim_device", "cpu")))
+    if sim_device.type != "cuda":
+        return sim_device, 0
 
-    # RLinf will set `CUDA_VISIBLE_DEVICES` to each sub process according to the `component_placement` config,
-    # So for EmbodiChain, we should always use `gpu_id=0` and cuda device `cuda:0` to access the GPU (which is actually the GPU assigned to the current process by RLinf).
+    hardware_ranks = os.environ.get("LOCAL_HARDWARE_RANKS", "")
+    if hardware_ranks:
+        physical_rank = int(hardware_ranks.split(",", maxsplit=1)[0])
+        return torch.device(f"cuda:{physical_rank}"), physical_rank
 
-    return sim_device, 0
+    accelerator_rank = _cfg_get(worker_info, "accelerator_rank")
+    if accelerator_rank is None or int(accelerator_rank) < 0:
+        # Preserve standalone usage, where no RLinf WorkerInfo is available.
+        return sim_device, 0
+    physical_rank = int(accelerator_rank)
+    return torch.device(f"cuda:{physical_rank}"), physical_rank
 
 
 def _clone_nested(value: Any) -> Any:
