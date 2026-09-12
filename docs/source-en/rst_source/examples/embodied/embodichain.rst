@@ -52,7 +52,7 @@ Tasks
    * - Task
      - Description
    * - CartPole
-     - Balance the pole with state observations from ``embodichain_tasks/configs/agents/rl/basic/cart_pole/gym_config.json``.
+     - Balance the pole with state observations from ``embodichain_tasks/configs/tasks/classic_control/cart_pole/env.json``.
 
 Observation and Action
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -149,10 +149,28 @@ Launch the CartPole recipe:
    * - MLP + PPO
      - ``examples/embodiment/config/embodichain_ppo_cart_pole.yaml``
      - ``embodichain_ppo_cart_pole``
+   * - MLP + PPO (GPU 6,7 smoke test)
+     - ``examples/embodiment/config/embodichain_ppo_cart_pole_gpu67.yaml``
+     - ``embodichain_ppo_cart_pole_gpu67``
 
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh embodichain_ppo_cart_pole
+
+For a short local validation run on physical GPUs 6 and 7, use the reduced
+configuration below. It places actor, rollout, and environment workers on
+those two GPU IDs and runs one rollout epoch:
+
+.. code:: bash
+
+   bash examples/embodiment/run_embodiment.sh embodichain_ppo_cart_pole_gpu67
+
+.. warning::
+
+   Keep all GPUs visible to Ray when using this file. Do not pre-set
+   ``CUDA_VISIBLE_DEVICES=6,7``: RLinf's ``6-7`` placement refers to the
+   physical accelerator ranks, and remapping them would make those ranks
+   unavailable to the scheduler.
 
 What this does:
 
