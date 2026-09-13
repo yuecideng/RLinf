@@ -149,28 +149,22 @@ Launch the CartPole recipe:
    * - MLP + PPO
      - ``examples/embodiment/config/embodichain_ppo_cart_pole.yaml``
      - ``embodichain_ppo_cart_pole``
-   * - MLP + PPO (GPU 6,7 smoke test)
-     - ``examples/embodiment/config/embodichain_ppo_cart_pole_gpu67.yaml``
-     - ``embodichain_ppo_cart_pole_gpu67``
 
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh embodichain_ppo_cart_pole
 
-For a short local validation run on physical GPUs 6 and 7, use the reduced
-configuration below. It places actor, rollout, and environment workers on
-those two GPU IDs and runs one rollout epoch:
+For a short local validation run on physical GPU 7, use the CartPole
+configuration above with reduced rollout settings:
 
 .. code:: bash
 
-   bash examples/embodiment/run_embodiment.sh embodichain_ppo_cart_pole_gpu67
+   bash examples/embodiment/run_embodiment.sh embodichain_ppo_cart_pole
 
 .. warning::
 
-   Keep all GPUs visible to Ray when using this file. Do not pre-set
-   ``CUDA_VISIBLE_DEVICES=6,7``: RLinf's ``6-7`` placement refers to the
-   physical accelerator ranks, and remapping them would make those ranks
-   unavailable to the scheduler.
+   Keep ``CUDA_VISIBLE_DEVICES`` unset so RLinf can schedule the physical GPU
+   selected by ``cluster.component_placement``.
 
 What this does:
 

@@ -147,26 +147,22 @@ PPO 训练 MLP actor-critic。
    * - MLP + PPO
      - ``examples/embodiment/config/embodichain_ppo_cart_pole.yaml``
      - ``embodichain_ppo_cart_pole``
-   * - MLP + PPO（GPU 6、7 冒烟测试）
-     - ``examples/embodiment/config/embodichain_ppo_cart_pole_gpu67.yaml``
-     - ``embodichain_ppo_cart_pole_gpu67``
 
 .. code:: bash
 
    bash examples/embodiment/run_embodiment.sh embodichain_ppo_cart_pole
 
-如需在本机 6、7 号 GPU 上进行一次短时联调，可使用下面的精简配置。该配置会将
-actor、rollout 和环境 worker 调度到这两张卡，并只运行一个 rollout epoch：
+如需在本机 7 号 GPU 上进行一次短时联调，可使用上面的 CartPole 配置并缩小
+rollout 参数：
 
 .. code:: bash
 
-   bash examples/embodiment/run_embodiment.sh embodichain_ppo_cart_pole_gpu67
+   bash examples/embodiment/run_embodiment.sh embodichain_ppo_cart_pole
 
 .. warning::
 
-   使用此配置时请让 Ray 看见全部 GPU，不要在启动前设置
-   ``CUDA_VISIBLE_DEVICES=6,7``。RLinf 的 ``6-7`` placement 指的是物理 GPU
-   编号；提前重映射会使调度器无法找到这些编号。
+   请保持 ``CUDA_VISIBLE_DEVICES`` 未设置，让 RLinf 根据
+   ``cluster.component_placement`` 调度物理 GPU。
 
 这条命令会：
 
