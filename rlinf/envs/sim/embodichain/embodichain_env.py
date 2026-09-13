@@ -84,9 +84,8 @@ def _resolve_sim_device_and_gpu_id(
 ) -> tuple[torch.device, int]:
     sim_device = torch.device(str(_cfg_get(cfg, "sim_device", "cpu")))
 
-    # RLinf will set `CUDA_VISIBLE_DEVICES` to each sub process according to the `component_placement` config,
-    # So for EmbodiChain, we should always use `gpu_id=0` and cuda device `cuda:0` to access the GPU (which is actually the GPU assigned to the current process by RLinf).
-
+    # RLinf isolates each worker with CUDA_VISIBLE_DEVICES, so the assigned
+    # physical GPU is exposed as local device 0 inside the process.
     return sim_device, 0
 
 
