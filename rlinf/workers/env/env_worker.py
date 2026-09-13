@@ -15,7 +15,6 @@
 import asyncio
 import gc
 from collections import defaultdict
-from dataclasses import replace
 from typing import Any
 
 import numpy as np
@@ -416,17 +415,6 @@ class EnvWorker(Worker):
 
     def _setup_env_and_wrappers(self, env_cls, env_cfg, num_envs_per_stage: int):
         env_list = []
-        worker_info = self.worker_info
-        if (
-            str(env_cfg.get("env_type", "")).lower() == "embodichain"
-            and self._local_hardware_ranks
-        ):
-            # EmbodiChain's Vulkan renderer uses physical GPU ordinals, while
-            # this env group deliberately keeps all GPUs visible for CUDA.
-            worker_info = replace(
-                self.worker_info,
-                accelerator_rank=self._local_hardware_ranks[0],
-            )
 
         for stage_id in range(self.stage_num):
             env = env_cls(
@@ -434,7 +422,7 @@ class EnvWorker(Worker):
                 num_envs=num_envs_per_stage,
                 seed_offset=self._rank * self.stage_num + stage_id,
                 total_num_processes=self._world_size * self.stage_num,
-                worker_info=worker_info,
+                worker_info=self.worker_info,
             )
             if (
                 self.cfg.env.get("delay_sampler", None)

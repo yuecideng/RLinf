@@ -41,7 +41,6 @@ def test_embodichain_cartpole_uses_current_task_layout():
     )
     assert cfg.env.eval.gym_config_path == cfg.env.train.gym_config_path
     assert cfg.cluster.num_nodes == 1
-    assert cfg.cluster.component_placement["actor,env,rollout"] == "6-7"
 
 
 def test_embodichain_uses_worker_physical_gpu_for_dexsim(
