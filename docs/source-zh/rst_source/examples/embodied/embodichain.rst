@@ -152,18 +152,6 @@ PPO 训练 MLP actor-critic。
 
    bash examples/embodiment/run_embodiment.sh embodichain_ppo_cart_pole
 
-如需在本机 7 号 GPU 上进行一次短时联调，可使用上面的 CartPole 配置并缩小
-rollout 参数：
-
-.. code:: bash
-
-   bash examples/embodiment/run_embodiment.sh embodichain_ppo_cart_pole
-
-.. warning::
-
-   请保持 ``CUDA_VISIBLE_DEVICES`` 未设置，让 RLinf 根据
-   ``cluster.component_placement`` 调度物理 GPU。
-
 这条命令会：
 
 1. 通过 ``gym_config_path`` 加载 EmbodiChain CartPole Gym JSON。

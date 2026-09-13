@@ -154,18 +154,6 @@ Launch the CartPole recipe:
 
    bash examples/embodiment/run_embodiment.sh embodichain_ppo_cart_pole
 
-For a short local validation run on physical GPU 7, use the CartPole
-configuration above with reduced rollout settings:
-
-.. code:: bash
-
-   bash examples/embodiment/run_embodiment.sh embodichain_ppo_cart_pole
-
-.. warning::
-
-   Keep ``CUDA_VISIBLE_DEVICES`` unset so RLinf can schedule the physical GPU
-   selected by ``cluster.component_placement``.
-
 What this does:
 
 1. Loads the EmbodiChain CartPole Gym JSON through ``gym_config_path``.
