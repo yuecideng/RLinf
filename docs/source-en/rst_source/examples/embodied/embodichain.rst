@@ -186,6 +186,38 @@ Then launch TensorBoard from the RLinf repo root:
 For every logged metric, see
 :doc:`Training metrics <../../reference/metrics>`.
 
+VLA repeated pick-and-place smoke test
+--------------------------------------
+
+The repository also includes a Franka repeated pick-and-place deployment for
+VLA integration. It exposes one camera, a 7D TCP pose plus gripper action, and
+the task prompt in the standard RLinf observation format. Set the checkpoint
+and matching normalization statistics, then launch the standard evaluation
+entry point from the repository root:
+
+.. code:: bash
+
+   export PI05_MODEL_PATH=/path/to/pi05_model
+   export EMBODICHAIN_NORM_STATS=/path/to/norm_stats.json
+   python evaluations/eval_embodied_agent.py \
+     --config-path "$PWD/examples/embodiment/config" \
+     --config-name embodichain_repeated_pick_place_vla_eval
+
+The same observation and action contract is used by
+``examples/sft/config/embodichain_sft_openpi_pi05.yaml``. Point
+``EMBODICHAIN_LEROBOT_DATA`` at an EmbodiChain LeRobot export and run
+``bash examples/sft/run_vla_sft.sh embodichain_sft_openpi_pi05`` to start SFT.
+These draft recipes depend on the companion ``task.franka.rlinf*.yaml``
+deployments, which are not included in EmbodiChain 0.3.0 yet.
+
+For comparison, a joint-space variant is provided in
+``examples/embodiment/config/embodichain_repeated_pick_place_joint_vla_eval.yaml``.
+It exposes a 9D joint state and an 8D action (seven arm joints plus one shared
+gripper value), following the ``pi05_rlt_maniskill_joint`` data contract. The
+public base checkpoint is only an initialization point for this route; a
+joint-control SFT checkpoint and matching norm stats are required for useful
+behavior.
+
 Evaluation and CI
 -----------------
 
