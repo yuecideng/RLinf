@@ -26,6 +26,7 @@ from rlinf.envs.sim.embodichain.embodichain_env import (
     EmbodiChainEnv,
     _format_joint_position_gripper_state,
 )
+from rlinf.models.embodiment.openpi.env_io import EnvIO
 
 
 def _compose_embodiment_config(name: str) -> Any:
@@ -89,6 +90,31 @@ def test_joint_state_adapter_collapses_franka_mimic_finger():
     converted = _format_joint_position_gripper_state(torch.from_numpy(state))
 
     np.testing.assert_array_equal(converted.numpy(), state[:, [0, 1, 2, 3, 4, 5, 6, 7]])
+
+
+def test_openpi_output_transform_receives_dataset_state_alias():
+    class FakeOpenPIEnvIO(EnvIO):
+        device = torch.device("cpu")
+
+    received = {}
+
+    def output_transform(sample):
+        received.update(sample)
+        return {"actions": sample["actions"]}
+
+    model = FakeOpenPIEnvIO()
+    model._output_transform_fn = output_transform
+    model._input_transform_fn = lambda sample: sample
+    model.action_chunk = 5
+
+    actions = torch.zeros(1, 5, 7)
+    state = torch.ones(1, 7)
+    decoded = model.decode_actions(actions, state)
+
+    assert "observation.state" in received
+    assert "action" in received
+    np.testing.assert_allclose(received["observation.state"], np.ones(7))
+    torch.testing.assert_close(decoded, actions)
 
 
 def test_embodichain_step_wraps_flat_action_for_dict_space():
