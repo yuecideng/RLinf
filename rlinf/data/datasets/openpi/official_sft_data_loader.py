@@ -73,6 +73,23 @@ def build_official_openpi_sft_dataloader(
         ),
         seed=int(OmegaConf.select(cfg, "actor.seed", default=config.seed)),
     )
+    # LeRobot >=0.4 exposes ``meta.tasks`` as a DataFrame, while the pinned
+    # OpenPI PromptFromLeRobotTask transform expects a dict[int, str].  VLA
+    # configs provide ``default_prompt`` and inject it in model transforms, so
+    # bypass the incompatible legacy task-index transform in that case.
+    if data_kwargs and data_kwargs.get("default_prompt"):
+        base_config = config.data.base_config
+        if base_config is None:
+            from openpi.training.config import DataConfig
+
+            base_config = DataConfig()
+        config = dataclasses.replace(
+            config,
+            data=dataclasses.replace(
+                config.data,
+                base_config=dataclasses.replace(base_config, prompt_from_task=False),
+            ),
+        )
     _validate_openpi_model_shape(model_cfg, config)
 
     data_loader = openpi_data_loader.create_data_loader(

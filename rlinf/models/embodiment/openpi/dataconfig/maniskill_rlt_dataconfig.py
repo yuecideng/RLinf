@@ -27,15 +27,17 @@ class LeRobotRLTManiSkillJointDataConfig(DataConfigFactory):
     """DataConfig for ManiSkill joint-space RLT LeRobot datasets."""
 
     extra_delta_transform: bool = False
-    image_key: str = "image"
-    wrist_image_key: str = "wrist_image"
+    image_key: str = "observation.images.cam_high"
+    wrist_image_key: str = "observation.images.wrist"
     extra_view_image_key: str | None = None
-    state_key: str = "state"
-    action_key: str = "actions"
+    state_key: str = "observation.state"
+    action_key: str = "action"
+    use_wrist_image: bool = False
     task_key: str | None = None
     prompt_key: str | None = None
     default_prompt: str | None = None
     output_action_dim: int = 8
+    action_sequence_keys: tuple[str, ...] = ("action",)
 
     @override
     def create(
@@ -43,10 +45,11 @@ class LeRobotRLTManiSkillJointDataConfig(DataConfigFactory):
     ) -> DataConfig:
         repack_structure = {
             "observation/image": self.image_key,
-            "observation/wrist_image": self.wrist_image_key,
             "observation/state": self.state_key,
             "actions": self.action_key,
         }
+        if self.use_wrist_image:
+            repack_structure["observation/wrist_image"] = self.wrist_image_key
         if self.prompt_key is not None:
             repack_structure["prompt"] = self.prompt_key
         if self.task_key is not None:
@@ -62,7 +65,7 @@ class LeRobotRLTManiSkillJointDataConfig(DataConfigFactory):
             inputs=[
                 maniskill_policy.ManiSkillInputs(
                     model_type=model_config.model_type,
-                    use_wrist_image=True,
+                    use_wrist_image=self.use_wrist_image,
                     default_prompt=self.default_prompt,
                 )
             ],
@@ -86,4 +89,5 @@ class LeRobotRLTManiSkillJointDataConfig(DataConfigFactory):
             repack_transforms=repack_transform,
             data_transforms=data_transforms,
             model_transforms=model_transforms,
+            action_sequence_keys=self.action_sequence_keys,
         )
