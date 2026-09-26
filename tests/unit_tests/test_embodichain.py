@@ -74,6 +74,17 @@ def test_embodichain_sft_config_reuses_vla_contract():
     assert cfg.data.train_data_paths
 
 
+def test_embodichain_joint_sft_config_uses_joint_contract():
+    config_dir = Path(__file__).parents[2] / "examples" / "sft" / "config"
+    cfg = _compose_config(config_dir, "embodichain_sft_openpi_pi05_joint")
+
+    assert cfg.runner.task_type == "sft"
+    assert cfg.actor.model.openpi.config_name == "pi05_rlt_maniskill_joint"
+    assert cfg.actor.model.action_dim == 8
+    assert cfg.actor.model.openpi.action_horizon == 10
+    assert cfg.data.train_data_paths
+
+
 def test_embodichain_joint_vla_config_uses_eight_dim_action():
     cfg = _compose_embodiment_config("embodichain_repeated_pick_place_joint_vla_eval")
 
