@@ -263,7 +263,11 @@ def put_text_on_image(
     image = image.copy()
     image = Image.fromarray(image)
     draw = ImageDraw.Draw(image)
-    font = ImageFont.load_default(size=20)
+    try:
+        font = ImageFont.load_default(size=20)
+    except TypeError:
+        # Pillow < 10 does not accept the optional size argument.
+        font = ImageFont.load_default()
 
     new_lines = []
     for line in lines:

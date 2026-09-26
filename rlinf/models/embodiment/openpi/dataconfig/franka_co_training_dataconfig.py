@@ -14,6 +14,7 @@
 
 import dataclasses
 import pathlib
+from collections.abc import Sequence
 
 import numpy as np
 import openpi.models.model as _model
@@ -40,6 +41,7 @@ class LeRobotFrankaEEDataConfig(DataConfigFactory):
     output_action_dim: int = 7
     # Keep Pi0.5 discrete state prompts at the raw dataset state dimension.
     pad_state: bool = True
+    action_sequence_keys: Sequence[str] = ("action",)
 
     def generate_observations(
         image: np.ndarray, state: np.ndarray, prompt: str
@@ -59,9 +61,9 @@ class LeRobotFrankaEEDataConfig(DataConfigFactory):
             inputs=[
                 _transforms.RepackTransform(
                     {
-                        "observation/image": "image",
-                        "observation/state": "state",
-                        "actions": "actions",
+                        "observation/image": "observation.images.cam_high",
+                        "observation/state": "observation.state",
+                        "actions": "action",
                         "prompt": "prompt",
                     }
                 )
@@ -99,4 +101,5 @@ class LeRobotFrankaEEDataConfig(DataConfigFactory):
             repack_transforms=repack_transform,
             data_transforms=data_transforms,
             model_transforms=model_transforms,
+            action_sequence_keys=self.action_sequence_keys,
         )

@@ -53,8 +53,9 @@ class FrankaEEOutputs(transforms.DataTransformFn):
     output_action_dim: int  # default output action dim is 7 (xyz + rpy + gripper)
 
     def __call__(self, data: dict) -> dict:
+        actions = data["action"] if "action" in data else data["actions"]
         return {
-            "actions": np.asarray(data["actions"][:, : self.output_action_dim])
+            "actions": np.asarray(actions[:, : self.output_action_dim])
         }  # use abs actions [x,y,z,rx,ry,rz,gripper] for Franka
 
 

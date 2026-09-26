@@ -182,6 +182,23 @@ PPO 训练 MLP actor-critic。
 
 完整指标说明见 :doc:`训练指标 <../../reference/metrics>`。
 
+VLA 抓放 smoke test
+----------------------------------------
+
+仓库还提供了用于 VLA 接入的 Franka repeated pick-and-place deployment。它通过标准 RLinf observation 暴露一个主视角相机、7D TCP pose 加夹爪动作和任务指令。设置 checkpoint 及匹配的 normalization statistics，然后从仓库根目录启动标准评测入口：
+
+.. code:: bash
+
+   export PI05_MODEL_PATH=/path/to/pi05_model
+   export EMBODICHAIN_NORM_STATS=/path/to/norm_stats.json
+   python evaluations/eval_embodied_agent.py \
+     --config-path "$PWD/examples/embodiment/config" \
+     --config-name embodichain_repeated_pick_place_vla_eval
+
+``examples/sft/config/embodichain_sft_openpi_pi05.yaml`` 使用相同的 observation 和 action contract。将 ``EMBODICHAIN_LEROBOT_DATA`` 指向 EmbodiChain 导出的 LeRobot 数据，再运行 ``bash examples/sft/run_vla_sft.sh embodichain_sft_openpi_pi05`` 启动 SFT。这些草稿配方依赖配套的 ``task.franka.rlinf*.yaml`` deployment；EmbodiChain 0.3.0 尚未包含这些配置。
+
+仓库还提供了关节角对照版本：``examples/embodiment/config/embodichain_repeated_pick_place_joint_vla_eval.yaml``。它暴露 9D joint state 和 8D action（7 个 arm joint 加一个共享夹爪值），遵循 ``pi05_rlt_maniskill_joint`` data contract。公开 base checkpoint 只能作为初始化权重；要获得有效行为，还需要关节控制 SFT checkpoint 和匹配的 norm stats。
+
 评测与 CI
 ----------------------------------------
 

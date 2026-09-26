@@ -100,6 +100,85 @@ def _clone_nested(value: Any) -> Any:
     return copy.deepcopy(value)
 
 
+def _lookup_nested(value: Any, path: str) -> Any:
+    """Read a slash- or dot-separated field from nested environment output."""
+    if value is None:
+        return None
+    if not path:
+        return value
+    if isinstance(value, dict) or hasattr(value, "keys"):
+        try:
+            return value[path]
+        except (KeyError, IndexError, TypeError):
+            pass
+        current = value
+        for part in path.replace(".", "/").split("/"):
+            try:
+                current = current[part]
+            except (KeyError, IndexError, TypeError):
+                return None
+        return current
+    try:
+        return value[path]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
+def _first_nested(value: Any, paths: list[str]) -> Any:
+    for path in paths:
+        result = _lookup_nested(value, path)
+        if result is not None:
+            return result
+    return None
+
+
+def _as_batched_tensor(value: Any, num_envs: int, device: torch.device) -> torch.Tensor:
+    tensor = value if isinstance(value, torch.Tensor) else torch.as_tensor(value)
+    tensor = tensor.to(device=device)
+    if tensor.ndim == 0:
+        tensor = tensor.reshape(1, 1).expand(num_envs, 1)
+    elif tensor.shape[0] != num_envs:
+        tensor = tensor.unsqueeze(0).expand(num_envs, *tensor.shape)
+    return tensor
+
+
+def _convert_pose_matrix(value: torch.Tensor) -> torch.Tensor:
+    """Convert batched homogeneous poses to xyz + rpy when needed."""
+    if value.ndim < 3 or value.shape[-2:] != (4, 4):
+        return value
+    rotation = value[..., :3, :3]
+    sy = torch.sqrt(rotation[..., 0, 0] ** 2 + rotation[..., 1, 0] ** 2)
+    singular = sy < 1e-6
+    roll = torch.atan2(rotation[..., 2, 1], rotation[..., 2, 2])
+    pitch = torch.atan2(-rotation[..., 2, 0], sy)
+    yaw = torch.atan2(rotation[..., 1, 0], rotation[..., 0, 0])
+    singular_roll = torch.atan2(-rotation[..., 1, 2], rotation[..., 1, 1])
+    roll = torch.where(singular, singular_roll, roll)
+    yaw = torch.where(singular, torch.zeros_like(yaw), yaw)
+    return torch.cat(
+        (value[..., :3, 3], roll[..., None], pitch[..., None], yaw[..., None]),
+        dim=-1,
+    )
+
+
+def _format_joint_position_gripper_state(value: torch.Tensor) -> torch.Tensor:
+    """Collapse Franka's two finger qpos values to one shared gripper value."""
+    if value.shape[-1] == 9:
+        return torch.cat((value[..., :7], value[..., 7:8]), dim=-1)
+    return value
+
+
+def _format_image(value: Any, num_envs: int, device: torch.device) -> torch.Tensor:
+    image = _as_batched_tensor(value, num_envs, device)
+    if image.ndim == 4 and image.shape[1] == 3 and image.shape[-1] != 3:
+        image = image.permute(0, 2, 3, 1)
+    if image.ndim == 4 and image.shape[-1] == 4:
+        image = image[..., :3]
+    if image.dtype.is_floating_point and image.max().item() <= 1.0:
+        image = image * 255.0
+    return image.to(dtype=torch.uint8)
+
+
 def _masked_update(dst: Any, src: Any, mask: torch.Tensor) -> Any:
     if src is None:
         return dst
@@ -169,8 +248,22 @@ class EmbodiChainEnv(gym.Env):
         self._elapsed_steps = torch.zeros(0, dtype=torch.int32)
 
         self.env = self._build_env()
-        action_low = np.asarray(self.env.action_space.low, dtype=np.float32)
-        action_high = np.asarray(self.env.action_space.high, dtype=np.float32)
+        action_space = self.env.action_space
+        self._action_key: Optional[str] = None
+        if isinstance(action_space, gym.spaces.Dict):
+            preferred_key = str(_cfg_get(cfg, "action_key", "eef_pose"))
+            if preferred_key in action_space.spaces:
+                self._action_key = preferred_key
+            elif len(action_space.spaces) == 1:
+                self._action_key = next(iter(action_space.spaces))
+            else:
+                raise ValueError(
+                    "EmbodiChain action space is a Dict; set action_key to one "
+                    f"of {list(action_space.spaces)}."
+                )
+            action_space = action_space.spaces[self._action_key]
+        action_low = np.asarray(action_space.low, dtype=np.float32)
+        action_high = np.asarray(action_space.high, dtype=np.float32)
         if action_low.ndim > 1:
             action_low = action_low[0]
             action_high = action_high[0]
@@ -295,13 +388,16 @@ class EmbodiChainEnv(gym.Env):
         # paths from the installed wheel; fall back to local/EMBODICHAIN_PATH
         # resolution for absolute or legacy relative configs.
         if gym_config_path_str.startswith("embodichain_tasks/"):
-            gym_config = load_config(gym_config_path_str)
+            gym_config_path = _resolve_gym_config_path(gym_config_path_str)
+            gym_config = load_config(str(gym_config_path))
         else:
             gym_config_path = _resolve_gym_config_path(gym_config_path_str)
             gym_config = load_config(str(gym_config_path))
 
         env_cfg = config_to_cfg(
-            deepcopy(gym_config), manager_modules=get_manager_modules()
+            deepcopy(gym_config),
+            manager_modules=get_manager_modules(),
+            source_path=gym_config_path,
         )
         env_cfg.num_envs = self.num_envs
         env_cfg.max_episode_steps = self.max_episode_steps
@@ -312,24 +408,103 @@ class EmbodiChainEnv(gym.Env):
         )
         return build_env(gym_config["id"], base_env_cfg=env_cfg)
 
-    def _wrap_obs(self, raw_obs: dict[str, Any]) -> dict[str, torch.Tensor]:
-        robot_obs = raw_obs["robot"]
-        state_parts: list[torch.Tensor] = []
-        for key in self.state_keys:
-            if key not in robot_obs:
-                continue
-            value = robot_obs[key]
-            if not isinstance(value, torch.Tensor):
-                value = torch.as_tensor(value, dtype=torch.float32, device=self.device)
-            value = value.to(self.device, dtype=torch.float32).reshape(
-                self.num_envs, -1
+    def _wrap_obs(self, raw_obs: dict[str, Any]) -> dict[str, Any]:
+        mapping = _cfg_get(self.cfg, "observation_mapping", {}) or {}
+        wrapped: dict[str, Any] = {}
+
+        main_path = _cfg_get(mapping, "main_images", None)
+        main_image = _first_nested(
+            raw_obs,
+            (
+                [main_path]
+                if isinstance(main_path, str)
+                else [
+                    "sensor/cam_high/color",
+                    "sensor/cam_high/rgb",
+                    "cam_high/color",
+                    "cam_high/rgb",
+                ]
+            ),
+        )
+        if main_image is not None:
+            wrapped["main_images"] = _format_image(
+                main_image, self.num_envs, self.device
             )
-            state_parts.append(value)
-        if not state_parts:
+
+        wrist_path = _cfg_get(mapping, "wrist_images", None)
+        wrist_image = _first_nested(
+            raw_obs,
+            (
+                [wrist_path]
+                if isinstance(wrist_path, str)
+                else [
+                    "sensor/cam_wrist/color",
+                    "sensor/cam_wrist/rgb",
+                    "cam_wrist/color",
+                    "cam_wrist/rgb",
+                ]
+            ),
+        )
+        wrapped["wrist_images"] = (
+            _format_image(wrist_image, self.num_envs, self.device)
+            if wrist_image is not None
+            else None
+        )
+
+        state_paths = _cfg_get(mapping, "states", None)
+        if state_paths is None:
+            robot_obs = _lookup_nested(raw_obs, "robot") or {}
+            state_parts = []
+            for key in self.state_keys:
+                value = _lookup_nested(robot_obs, key)
+                if value is not None:
+                    state_parts.append(
+                        _as_batched_tensor(value, self.num_envs, self.device)
+                        .to(dtype=torch.float32)
+                        .reshape(self.num_envs, -1)
+                    )
+        else:
+            if isinstance(state_paths, str):
+                state_paths = [state_paths]
+            state_parts = []
+            for path in state_paths:
+                value = _lookup_nested(raw_obs, str(path))
+                if value is not None:
+                    value = _convert_pose_matrix(
+                        _as_batched_tensor(value, self.num_envs, self.device)
+                    )
+                    if (
+                        _cfg_get(_cfg_get(self.cfg, "action_adapter", {}), "type", None)
+                        == "joint_position_gripper"
+                        and str(path).replace(".", "/") == "robot/qpos"
+                    ):
+                        value = _format_joint_position_gripper_state(value)
+                    state_parts.append(
+                        value.to(dtype=torch.float32).reshape(self.num_envs, -1)
+                    )
+        if state_parts:
+            wrapped["states"] = torch.cat(state_parts, dim=-1)
+        elif main_image is None:
             raise ValueError(
-                f"Failed to construct EmbodiChain state from keys {self.state_keys}."
+                f"Failed to construct EmbodiChain observation from mapping {mapping}."
             )
-        return {"states": torch.cat(state_parts, dim=-1)}
+
+        task_path = _cfg_get(mapping, "task_descriptions", None)
+        task_description = _first_nested(
+            raw_obs,
+            [task_path] if isinstance(task_path, str) else ["task_descriptions"],
+        )
+        if task_description is None:
+            task_description = _cfg_get(
+                self.cfg,
+                "task_description",
+                "Pick up the cube and place it on the marked target.",
+            )
+        if isinstance(task_description, str):
+            task_description = [task_description] * self.num_envs
+        wrapped["task_descriptions"] = list(task_description)
+        wrapped["extra_view_images"] = None
+        return wrapped
 
     def _wrap_info(self, infos: Any) -> dict[str, Any]:
         if infos is None:
@@ -359,7 +534,7 @@ class EmbodiChainEnv(gym.Env):
     def step(
         self, actions: Union[np.ndarray, torch.Tensor]
     ) -> tuple[
-        dict[str, torch.Tensor],
+        dict[str, Any],
         torch.Tensor,
         torch.Tensor,
         torch.Tensor,
@@ -374,9 +549,12 @@ class EmbodiChainEnv(gym.Env):
             action_tensor = action_tensor.unsqueeze(0).repeat(self.num_envs, 1)
         action_tensor = action_tensor.reshape(self.num_envs, -1)
 
-        raw_obs, rewards, terminations, truncations, infos = self.env.step(
-            action_tensor
+        env_actions = (
+            {self._action_key: action_tensor}
+            if self._action_key is not None
+            else action_tensor
         )
+        raw_obs, rewards, terminations, truncations, infos = self.env.step(env_actions)
         infos = self._wrap_info(infos)
         self._elapsed_steps += 1
         infos = self._record_metrics(rewards, infos)

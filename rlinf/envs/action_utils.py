@@ -326,6 +326,32 @@ def prepare_actions_for_roboverse(
     return chunk_actions
 
 
+def prepare_actions_for_embodichain(raw_chunk_actions, env_cfg=None):
+    """Validate the flat action contract used by an EmbodiChain VLA task."""
+    actions = np.asarray(raw_chunk_actions, dtype=np.float32)
+    action_adapter = getattr(env_cfg, "action_adapter", None) if env_cfg else None
+    adapter_type = (
+        action_adapter.get("type")
+        if isinstance(action_adapter, dict)
+        else getattr(action_adapter, "type", None)
+    )
+    if adapter_type in (None, "eef_pose_gripper", "joint_position_gripper"):
+        if actions.shape[-1] >= 7:
+            actions = actions.copy()
+            if adapter_type == "eef_pose_gripper":
+                # Keep raw pretrained VLA outputs inside the Franka tabletop
+                # workspace before EmbodiChain's IK solver sees them.
+                actions[..., 0] = np.clip(actions[..., 0], -0.65, 0.45)
+                actions[..., 1] = np.clip(actions[..., 1], -0.65, 0.65)
+                actions[..., 2] = np.clip(actions[..., 2], 0.05, 0.95)
+                actions[..., 3:6] = np.clip(actions[..., 3:6], -np.pi, np.pi)
+            actions[..., -1] = np.clip(actions[..., -1], -1.0, 1.0)
+        return actions
+    raise NotImplementedError(
+        f"EmbodiChain action adapter {adapter_type!r} is not supported."
+    )
+
+
 def prepare_actions(
     raw_chunk_actions,
     env_type: str,
@@ -372,7 +398,9 @@ def prepare_actions(
     elif env_type == SupportedEnvType.ROBOTWIN:
         chunk_actions = raw_chunk_actions
     elif env_type == SupportedEnvType.EMBODICHAIN:
-        chunk_actions = raw_chunk_actions
+        chunk_actions = prepare_actions_for_embodichain(
+            raw_chunk_actions=raw_chunk_actions, env_cfg=env_cfg
+        )
     elif env_type == SupportedEnvType.METAWORLD:
         chunk_actions = prepare_actions_for_metaworld(
             raw_chunk_actions=raw_chunk_actions,
