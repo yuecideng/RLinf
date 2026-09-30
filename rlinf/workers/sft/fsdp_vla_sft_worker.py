@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import json
 import os
 from typing import Any
 
@@ -105,7 +106,10 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         return loss, step_metrics
 
     def save_checkpoint(self, save_path: str, step: int = 0) -> None:
-        super().save_checkpoint(save_path, step)
+        if self.cfg.actor.model.get("is_lora", False):
+            self._save_lora_checkpoint(save_path)
+        else:
+            super().save_checkpoint(save_path, step)
 
         if isinstance(self.data_loader, StatefulDataLoader):
             state = self.data_loader.state_dict()
@@ -125,6 +129,44 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                 torch.save(all_rng_states, os.path.join(save_path, "rng.pt"))
 
             torch.distributed.barrier()
+
+    def _save_lora_checkpoint(self, save_path: str) -> None:
+        """Save a PEFT adapter without asking FSDP to unshard frozen modules."""
+        from safetensors.torch import save_file
+
+        adapter_dir = os.path.join(save_path, "adapter")
+        torch.distributed.barrier()
+        if self._rank == 0:
+            os.makedirs(adapter_dir, exist_ok=True)
+            state_dict = {}
+            for name, parameter in self.model.named_parameters():
+                if "lora_" not in name:
+                    continue
+                normalized = name.replace("_fsdp_wrapped_module.", "")
+                normalized = normalized.replace(".default.", ".")
+                state_dict[normalized] = parameter.detach().cpu()
+            if not state_dict:
+                raise RuntimeError("LoRA checkpoint contains no adapter parameters.")
+            save_file(
+                state_dict, os.path.join(adapter_dir, "adapter_model.safetensors")
+            )
+
+            peft_model = getattr(self.model, "module", self.model)
+            peft_config = getattr(peft_model, "peft_config", {}).get("default")
+            if peft_config is None:
+                raise RuntimeError("LoRA model is missing the default PEFT config.")
+            config = peft_config.to_dict()
+            with open(os.path.join(adapter_dir, "adapter_config.json"), "w") as file:
+                json.dump(
+                    config,
+                    file,
+                    indent=2,
+                    sort_keys=True,
+                    default=lambda value: (
+                        sorted(value) if isinstance(value, set) else str(value)
+                    ),
+                )
+        torch.distributed.barrier()
 
     def load_checkpoint(self, load_path: str) -> None:
         super().load_checkpoint(load_path)

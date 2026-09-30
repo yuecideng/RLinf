@@ -1,0 +1,77 @@
+defaults:
+  - env/embodichain_repeated_pick_place_joint@env.eval
+  - model/pi0_5@rollout.model
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    rollout,env: 0
+
+runner:
+  task_type: embodied_eval
+  logger:
+    log_path: ../results/embodichain_repeated_pick_place_joint_vla
+    project_name: rlinf
+    experiment_name: embodichain_repeated_pick_place_joint_vla_eval
+    logger_backends: [tensorboard]
+  only_eval: true
+  max_epochs: 1
+  max_steps: 1
+  val_check_interval: -1
+  save_interval: -1
+  resume_dir: null
+  ckpt_path: null
+
+env:
+  group_name: EnvGroup
+  eval:
+    rollout_epoch: 1
+    total_num_envs: 1
+    group_size: 1
+    max_steps_per_rollout_epoch: 240
+    max_episode_steps: 240
+    is_eval: true
+    video_cfg:
+      save_video: true
+      info_on_video: true
+      video_base_dir: ${runner.logger.log_path}/video
+
+rollout:
+  group_name: RolloutGroup
+  backend: huggingface
+  enable_offload: false
+  pipeline_stage_num: 1
+  sampling_params:
+    do_sample: true
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 50
+    top_p: 1.0
+    repetition_penalty: 1.0
+    max_new_tokens: null
+  model:
+    model_path: ${oc.env:PI05_MODEL_PATH,/path/to/pi05_model}
+    add_value_head: false
+    num_action_chunks: 10
+    action_dim: 8
+    num_steps: 5
+    openpi:
+      task: eval
+      config_name: pi05_rlt_maniskill_joint
+      num_images_in_input: 2
+      action_chunk: ${rollout.model.num_action_chunks}
+      action_horizon: 10
+      action_env_dim: ${rollout.model.action_dim}
+      num_steps: ${rollout.model.num_steps}
+      model_action_dim: 32
+      discrete_state_input: true
+    openpi_data:
+      repo_id: embodichain_repeated_pick_place_joint
+      norm_stats_path: ${oc.env:EMBODICHAIN_NORM_STATS,/path/to/norm_stats.json}

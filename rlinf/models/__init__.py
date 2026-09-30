@@ -405,6 +405,26 @@ def get_model(cfg: DictConfig):
                 target_modules = "all-linear"
             else:
                 raise ValueError(f"Unsupported lora_target_scope: {target_scope!r}")
+            if SupportedModel(model_type) == SupportedModel.OPENPI and isinstance(
+                target_modules, list
+            ):
+                # OpenPI attention projections are ModuleLists containing the
+                # actual Linear layers at ``*.q_proj.0`` / ``*.q_proj.1``.
+                # PEFT cannot inject into the parent ModuleList, so target
+                # only concrete Linear descendants.
+                import torch.nn as nn
+
+                target_modules = [
+                    name
+                    for name, module in model.named_modules()
+                    if isinstance(module, nn.Linear)
+                    and any(
+                        f".{target}." in name or name.endswith(f".{target}")
+                        for target in target_modules
+                    )
+                ]
+                if not target_modules:
+                    raise ValueError("OpenPI LoRA found no compatible Linear targets.")
             lora_config = LoraConfig(
                 r=cfg.lora_rank,
                 lora_alpha=cfg.lora_rank,

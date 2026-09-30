@@ -13,6 +13,7 @@
 # limitations under the License.
 import dataclasses
 import pathlib
+from collections.abc import Sequence
 
 import numpy as np
 import openpi.models.model as _model
@@ -37,6 +38,7 @@ class CustomDataConfig(DataConfigFactory):
     extra_delta_transform: bool = True  # False for additional process(abs_action - state) to get delta action for training
     # train actions using rotation_6d
     action_train_with_rotation_6d: bool = False
+    action_sequence_keys: Sequence[str] = ("action",)
 
     def generate_observations(
         image: np.ndarray, state: np.ndarray, prompt: str
@@ -56,9 +58,9 @@ class CustomDataConfig(DataConfigFactory):
             inputs=[
                 _transforms.RepackTransform(
                     {
-                        "observation/image": "image",
-                        "observation/state": "state",
-                        "actions": "actions",
+                        "observation/image": "observation.images.cam_high",
+                        "observation/state": "observation.state",
+                        "actions": "action",
                         "prompt": "prompt",
                     }
                 )
@@ -98,4 +100,5 @@ class CustomDataConfig(DataConfigFactory):
             repack_transforms=repack_transform,
             data_transforms=data_transforms,
             model_transforms=model_transforms,
+            action_sequence_keys=self.action_sequence_keys,
         )

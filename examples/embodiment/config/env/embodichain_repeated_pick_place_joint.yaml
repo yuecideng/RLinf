@@ -1,0 +1,18 @@
+env_type: embodichain
+gym_config_path: embodichain_tasks/configs/tasks/manipulation/repeated_pick_place/task.franka.rlinf_joint.yaml
+
+observation_mapping:
+  main_images: sensor/cam_high/color
+  states:
+    - robot/qpos
+
+action_adapter:
+  type: joint_position_gripper
+action_key: qpos
+task_description: Pick up the cube and place it on the marked target.
+state_keys: [qpos, qvel, qf]
+headless: true
+seed: 0
+auto_reset: true
+ignore_terminations: false
+max_episode_steps: 240

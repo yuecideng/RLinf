@@ -96,7 +96,18 @@ class EnvIO:
         self, model_actions: torch.Tensor, state: torch.Tensor
     ) -> torch.Tensor:
         """Run the output transform and return env-space actions on this device."""
-        env_outputs = self.output_transform({"actions": model_actions, "state": state})
+        # OpenPI's ``Unnormalize`` transform is keyed by dataset feature names
+        # (``observation.state``), while RLinf's model object carries the same
+        # value as the compact ``state`` field.  Keep both aliases at this
+        # boundary so state-aware output transforms work for eval and RL paths.
+        env_outputs = self.output_transform(
+            {
+                "actions": model_actions,
+                "action": model_actions,
+                "state": state,
+                "observation.state": state,
+            }
+        )
         return env_outputs["actions"].to(device=self.device, dtype=torch.float32)
 
     def _observation_dict_to_device(self, processed: dict) -> Observation:
