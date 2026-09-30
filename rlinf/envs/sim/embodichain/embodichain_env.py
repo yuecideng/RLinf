@@ -161,6 +161,24 @@ def _convert_pose_matrix(value: torch.Tensor) -> torch.Tensor:
     )
 
 
+def _convert_pose_matrix_to_rot6d(value: torch.Tensor) -> torch.Tensor:
+    """Convert batched homogeneous poses to xyz plus the first two rotation columns."""
+    if value.ndim < 3 or value.shape[-2:] != (4, 4):
+        raise ValueError(
+            "Rot6D pose conversion expects a batched homogeneous pose matrix; "
+            f"got shape {tuple(value.shape)}."
+        )
+    rotation = value[..., :3, :3]
+    return torch.cat(
+        (
+            value[..., :3, 3],
+            rotation[..., :, 0],
+            rotation[..., :, 1],
+        ),
+        dim=-1,
+    )
+
+
 def _format_joint_position_gripper_state(value: torch.Tensor) -> torch.Tensor:
     """Collapse Franka's two finger qpos values to one shared gripper value."""
     if value.shape[-1] == 9:
@@ -452,6 +470,7 @@ class EmbodiChainEnv(gym.Env):
         )
 
         state_paths = _cfg_get(mapping, "states", None)
+        state_representation = str(_cfg_get(mapping, "state_representation", "default"))
         if state_paths is None:
             robot_obs = _lookup_nested(raw_obs, "robot") or {}
             state_parts = []
@@ -470,9 +489,14 @@ class EmbodiChainEnv(gym.Env):
             for path in state_paths:
                 value = _lookup_nested(raw_obs, str(path))
                 if value is not None:
-                    value = _convert_pose_matrix(
-                        _as_batched_tensor(value, self.num_envs, self.device)
-                    )
+                    value = _as_batched_tensor(value, self.num_envs, self.device)
+                    if (
+                        state_representation == "xyz_rot6d_gripper"
+                        and str(path).replace(".", "/") == "robot/eef_pose"
+                    ):
+                        value = _convert_pose_matrix_to_rot6d(value)
+                    else:
+                        value = _convert_pose_matrix(value)
                     if (
                         _cfg_get(_cfg_get(self.cfg, "action_adapter", {}), "type", None)
                         == "joint_position_gripper"
@@ -482,6 +506,34 @@ class EmbodiChainEnv(gym.Env):
                     state_parts.append(
                         value.to(dtype=torch.float32).reshape(self.num_envs, -1)
                     )
+        if state_representation == "xyz_rot6d_gripper" and state_parts:
+            state_dim = sum(int(part.shape[-1]) for part in state_parts)
+            if state_dim == 9:
+                raw_qpos = _lookup_nested(raw_obs, "robot/qpos")
+                if raw_qpos is None:
+                    raise ValueError(
+                        "xyz_rot6d_gripper state requires robot/qpos to derive "
+                        "the normalized gripper state."
+                    )
+                qpos = _as_batched_tensor(raw_qpos, self.num_envs, self.device)
+                if qpos.shape[-1] < 8:
+                    raise ValueError(
+                        "xyz_rot6d_gripper state requires Franka qpos with a "
+                        f"gripper value, got shape {tuple(qpos.shape)}."
+                    )
+                low = float(_cfg_get(self.cfg, "gripper_state_low", 0.0))
+                high = float(_cfg_get(self.cfg, "gripper_state_high", 0.04))
+                if high <= low:
+                    raise ValueError(
+                        "gripper_state_high must be greater than gripper_state_low."
+                    )
+                gripper = (
+                    qpos[..., 7:9].mean(dim=-1, keepdim=True)
+                    if qpos.shape[-1] >= 9
+                    else qpos[..., 7:8]
+                )
+                gripper = ((gripper - low) / (high - low) * 2.0 - 1.0).clamp(-1.0, 1.0)
+                state_parts.append(gripper.to(dtype=torch.float32))
         if state_parts:
             wrapped["states"] = torch.cat(state_parts, dim=-1)
         elif main_image is None:

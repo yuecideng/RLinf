@@ -210,6 +210,42 @@ The same observation and action contract is used by
 These draft recipes depend on the companion ``task.franka.rlinf*.yaml``
 deployments, which are not included in EmbodiChain 0.3.0 yet.
 
+The official PI EEF contract is available through the Rot6D variant
+``embodichain_repeated_pick_place_rot6d_vla_eval``. The policy action is
+``[x, y, z, rot6d, gripper]``; RLinf converts the six rotation values to an
+``xyzw`` quaternion before passing the compact pose action to EmbodiChain's
+``EefPoseAction``. Use ``pi05_franka_rot6d`` normalization statistics and the
+matching Rot6D LeRobot dataset for SFT.
+
+Convert an existing 7D ``[xyz, rpy, gripper]`` LeRobot export before SFT:
+
+.. code:: bash
+
+   python toolkits/convert_embodichain_eef_to_rot6d.py \
+     /path/to/eef_dataset /path/to/eef_dataset_rot6d
+
+The SFT recipe uses GPUs 0 and 2, LoRA rank 4, and a one-sample micro-batch:
+
+.. code:: bash
+
+   export PI05_MODEL_PATH=/path/to/pi05_model
+   export EMBODICHAIN_LEROBOT_ROT6D_DATA=/path/to/eef_dataset_rot6d
+   export EMBODICHAIN_ROT6D_NORM_STATS=/path/to/eef_dataset_rot6d/meta/norm_stats.json
+   bash examples/sft/run_vla_sft.sh embodichain_sft_openpi_pi05_rot6d
+
+Evaluate a saved adapter by passing its directory through
+``rollout.model.lora_path``:
+
+.. code:: bash
+
+   export EMBODICHAIN_PATH=/path/to/EmbodiChain
+   python evaluations/eval_embodied_agent.py \
+     --config-path "$PWD/examples/embodiment/config" \
+     --config-name embodichain_repeated_pick_place_rot6d_vla_eval \
+     rollout.model.is_lora=true \
+     rollout.model.lora_rank=4 \
+     rollout.model.lora_path=/path/to/checkpoints/global_step_1/actor/adapter
+
 For comparison, a joint-space variant is provided in
 ``examples/embodiment/config/embodichain_repeated_pick_place_joint_vla_eval.yaml``.
 It exposes a 9D joint state and an 8D action (seven arm joints plus one shared

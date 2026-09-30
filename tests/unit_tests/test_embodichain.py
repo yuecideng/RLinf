@@ -14,19 +14,26 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
+import pytest
 import torch
 from hydra import compose, initialize_config_dir
 
 from rlinf.envs.action_utils import prepare_actions_for_embodichain
 from rlinf.envs.sim.embodichain.embodichain_env import (
     EmbodiChainEnv,
+    _convert_pose_matrix_to_rot6d,
     _format_joint_position_gripper_state,
 )
 from rlinf.models.embodiment.openpi.env_io import EnvIO
+from toolkits.convert_embodichain_eef_to_rot6d import convert_dataset
 
 
 def _compose_embodiment_config(name: str) -> Any:
@@ -63,6 +70,81 @@ def test_embodichain_vla_action_adapter_preserves_pose_and_clips_gripper():
     assert converted[..., 6].item() == 1.0
 
 
+def test_embodichain_rot6d_action_adapter_converts_to_quaternion():
+    actions = np.array(
+        [[[0.2, -0.3, 0.4, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 2.0]]],
+        dtype=np.float32,
+    )
+    cfg = SimpleNamespace(action_adapter=SimpleNamespace(type="eef_pose_rot6d_gripper"))
+
+    converted = prepare_actions_for_embodichain(actions, env_cfg=cfg)
+
+    assert converted.shape == (1, 1, 8)
+    np.testing.assert_allclose(converted[..., :3], actions[..., :3])
+    np.testing.assert_allclose(
+        converted[..., 3:7], np.array([0.0, 0.0, 0.0, 1.0]).reshape(1, 1, 4)
+    )
+    assert converted[..., 7].item() == 1.0
+
+
+def test_embodichain_rot6d_action_adapter_rejects_wrong_width():
+    actions = np.zeros((1, 1, 7), dtype=np.float32)
+    cfg = SimpleNamespace(action_adapter=SimpleNamespace(type="eef_pose_rot6d_gripper"))
+
+    with pytest.raises(ValueError, match=r"expects \[xyz, rot6d, gripper\]"):
+        prepare_actions_for_embodichain(actions, env_cfg=cfg)
+
+
+def test_embodichain_rot6d_state_adapter_uses_rotation_columns():
+    pose = torch.eye(4, dtype=torch.float32).reshape(1, 4, 4)
+    pose[0, :3, 3] = torch.tensor([0.1, -0.2, 0.3])
+
+    converted = _convert_pose_matrix_to_rot6d(pose)
+
+    assert converted.shape == (1, 9)
+    torch.testing.assert_close(
+        converted,
+        torch.tensor([[0.1, -0.2, 0.3, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]]),
+    )
+
+
+def test_embodichain_rot6d_dataset_converter_updates_data_and_metadata(tmp_path):
+    source = tmp_path / "source"
+    (source / "data").mkdir(parents=True)
+    (source / "meta").mkdir()
+    values = [[0.1, -0.2, 0.3, 0.0, 0.0, 0.0, 0.5]]
+    table = pa.table(
+        {
+            "observation.state": values,
+            "action": values,
+            "observation.eef_pose": values,
+        }
+    )
+    pq.write_table(table, source / "data" / "episode.parquet")
+    features = {
+        key: {"shape": [7], "names": ["x", "y", "z", "roll", "pitch", "yaw", "gripper"]}
+        for key in ("observation.state", "action", "observation.eef_pose")
+    }
+    (source / "meta" / "info.json").write_text(json.dumps({"features": features}))
+    (source / "meta" / "norm_stats.json").write_text(
+        json.dumps({"norm_stats": {"observation.state": {}, "action": {}}})
+    )
+
+    output = tmp_path / "output"
+    convert_dataset(source, output)
+
+    converted = pq.read_table(output / "data" / "episode.parquet")
+    np.testing.assert_allclose(
+        np.asarray(converted["observation.state"].to_pylist(), dtype=np.float32),
+        [[0.1, -0.2, 0.3, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.5]],
+    )
+    metadata = json.loads((output / "meta" / "info.json").read_text())
+    assert metadata["features"]["action"]["shape"] == [10]
+    stats = json.loads((output / "meta" / "norm_stats.json").read_text())
+    assert set(stats["norm_stats"]) == {"observation.state", "action"}
+    assert len(stats["norm_stats"]["action"]["mean"]) == 10
+
+
 def test_embodichain_sft_config_reuses_vla_contract():
     config_dir = Path(__file__).parents[2] / "examples" / "sft" / "config"
     cfg = _compose_config(config_dir, "embodichain_sft_openpi_pi05")
@@ -94,6 +176,29 @@ def test_embodichain_joint_vla_config_uses_eight_dim_action():
     assert cfg.rollout.model.action_dim == 8
     assert cfg.rollout.model.openpi.config_name == "pi05_rlt_maniskill_joint"
     assert cfg.rollout.model.openpi.task == "eval"
+
+
+def test_embodichain_rot6d_vla_config_uses_official_contract():
+    cfg = _compose_embodiment_config("embodichain_repeated_pick_place_rot6d_vla_eval")
+
+    assert cfg.env.eval.action_adapter.type == "eef_pose_rot6d_gripper"
+    assert cfg.env.eval.observation_mapping.state_representation == (
+        "xyz_rot6d_gripper"
+    )
+    assert cfg.rollout.model.action_dim == 10
+    assert cfg.rollout.model.openpi.config_name == "pi05_franka_rot6d"
+
+
+def test_embodichain_rot6d_sft_config_uses_ten_dim_contract():
+    config_dir = Path(__file__).parents[2] / "examples" / "sft" / "config"
+    cfg = _compose_config(config_dir, "embodichain_sft_openpi_pi05_rot6d")
+
+    assert cfg.cluster.component_placement.actor == "0,2"
+    assert cfg.actor.model.is_lora is True
+    assert cfg.actor.model.lora_rank == 4
+    assert cfg.actor.micro_batch_size == 1
+    assert cfg.actor.model.action_dim == 10
+    assert cfg.actor.model.openpi.config_name == "pi05_franka_rot6d"
 
 
 def test_joint_state_adapter_collapses_franka_mimic_finger():

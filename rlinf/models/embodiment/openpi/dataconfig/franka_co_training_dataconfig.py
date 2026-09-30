@@ -103,3 +103,16 @@ class LeRobotFrankaEEDataConfig(DataConfigFactory):
             model_transforms=model_transforms,
             action_sequence_keys=self.action_sequence_keys,
         )
+
+
+@dataclasses.dataclass(frozen=True)
+class LeRobotFrankaRot6DDataConfig(LeRobotFrankaEEDataConfig):
+    """Single-arm EEF contract used by the official PI Rot6D path.
+
+    The model receives and predicts ``[xyz, rot6d, gripper]``. The runtime
+    adapter converts that 10D vector to the task's compact quaternion action
+    before calling EmbodiChain's ``EefPoseAction``.
+    """
+
+    output_action_dim: int = 10
+    pad_state: bool = False

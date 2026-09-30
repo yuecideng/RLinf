@@ -327,7 +327,7 @@ def prepare_actions_for_roboverse(
 
 
 def prepare_actions_for_embodichain(raw_chunk_actions, env_cfg=None):
-    """Validate the flat action contract used by an EmbodiChain VLA task."""
+    """Convert a flat OpenPI action into an EmbodiChain task action."""
     actions = np.asarray(raw_chunk_actions, dtype=np.float32)
     action_adapter = getattr(env_cfg, "action_adapter", None) if env_cfg else None
     adapter_type = (
@@ -347,6 +347,29 @@ def prepare_actions_for_embodichain(raw_chunk_actions, env_cfg=None):
                 actions[..., 3:6] = np.clip(actions[..., 3:6], -np.pi, np.pi)
             actions[..., -1] = np.clip(actions[..., -1], -1.0, 1.0)
         return actions
+
+    if adapter_type == "eef_pose_rot6d_gripper":
+        if actions.shape[-1] != 10:
+            raise ValueError(
+                "eef_pose_rot6d_gripper expects [xyz, rot6d, gripper] with "
+                f"10 values, got trailing shape {actions.shape[-1:]}."
+            )
+        from rlinf.utils.rot6d import rot6d_to_quat_xyzw
+
+        if not np.isfinite(actions).all():
+            raise ValueError("eef_pose_rot6d_gripper received non-finite values.")
+        quaternions = rot6d_to_quat_xyzw(actions[..., 3:9])
+        converted = np.concatenate(
+            (actions[..., :3], quaternions, actions[..., 9:10]), axis=-1
+        ).astype(np.float32, copy=False)
+        # Keep the EmbodiChain task boundary compact: xyz + xyzw quaternion +
+        # normalized gripper. EefPoseAction handles the quaternion-to-matrix
+        # conversion and IK.
+        converted[..., 0] = np.clip(converted[..., 0], -0.65, 0.45)
+        converted[..., 1] = np.clip(converted[..., 1], -0.65, 0.65)
+        converted[..., 2] = np.clip(converted[..., 2], 0.05, 0.95)
+        converted[..., -1] = np.clip(converted[..., -1], -1.0, 1.0)
+        return converted
     raise NotImplementedError(
         f"EmbodiChain action adapter {adapter_type!r} is not supported."
     )

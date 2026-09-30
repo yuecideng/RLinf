@@ -197,6 +197,36 @@ VLA 抓放 smoke test
 
 ``examples/sft/config/embodichain_sft_openpi_pi05.yaml`` 使用相同的 observation 和 action contract。将 ``EMBODICHAIN_LEROBOT_DATA`` 指向 EmbodiChain 导出的 LeRobot 数据，再运行 ``bash examples/sft/run_vla_sft.sh embodichain_sft_openpi_pi05`` 启动 SFT。这些草稿配方依赖配套的 ``task.franka.rlinf*.yaml`` deployment；EmbodiChain 0.3.0 尚未包含这些配置。
 
+官方 PI 的 EEF contract 可通过 ``embodichain_repeated_pick_place_rot6d_vla_eval`` 使用。policy action 是 ``[x, y, z, rot6d, gripper]``；RLinf 会先将 6 个旋转值转换成 ``xyzw`` quaternion，再把紧凑的 pose action 传给 EmbodiChain 的 ``EefPoseAction``。SFT 时使用 ``pi05_franka_rot6d`` 对应的 normalization statistics 和 Rot6D LeRobot 数据。
+
+已有 7D ``[xyz, rpy, gripper]`` LeRobot 数据可以先转换为 Rot6D：
+
+.. code:: bash
+
+   python toolkits/convert_embodichain_eef_to_rot6d.py \
+     /path/to/eef_dataset /path/to/eef_dataset_rot6d
+
+SFT 配置默认使用 0、2 号卡、LoRA rank 4 和 1 条样本的 micro-batch：
+
+.. code:: bash
+
+   export PI05_MODEL_PATH=/path/to/pi05_model
+   export EMBODICHAIN_LEROBOT_ROT6D_DATA=/path/to/eef_dataset_rot6d
+   export EMBODICHAIN_ROT6D_NORM_STATS=/path/to/eef_dataset_rot6d/meta/norm_stats.json
+   bash examples/sft/run_vla_sft.sh embodichain_sft_openpi_pi05_rot6d
+
+评测 LoRA adapter 时，将其目录传给 ``rollout.model.lora_path``：
+
+.. code:: bash
+
+   export EMBODICHAIN_PATH=/path/to/EmbodiChain
+   python evaluations/eval_embodied_agent.py \
+     --config-path "$PWD/examples/embodiment/config" \
+     --config-name embodichain_repeated_pick_place_rot6d_vla_eval \
+     rollout.model.is_lora=true \
+     rollout.model.lora_rank=4 \
+     rollout.model.lora_path=/path/to/checkpoints/global_step_1/actor/adapter
+
 仓库还提供了关节角对照版本：``examples/embodiment/config/embodichain_repeated_pick_place_joint_vla_eval.yaml``。它暴露 9D joint state 和 8D action（7 个 arm joint 加一个共享夹爪值），遵循 ``pi05_rlt_maniskill_joint`` data contract。公开 base checkpoint 只能作为初始化权重；要获得有效行为，还需要关节控制 SFT checkpoint 和匹配的 norm stats。
 
 评测与 CI
