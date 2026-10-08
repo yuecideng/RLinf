@@ -41,6 +41,27 @@ def _resolve_gym_config_path(gym_config_path: str) -> Path:
     else:
         rel_path = raw
 
+    if rel_path is not None and rel_path.parts[:1] == ("rlinf",):
+        package_root = Path(__file__).resolve().parents[3]
+        candidate = (package_root / Path(*rel_path.parts[1:])).resolve()
+        if not candidate.is_relative_to(package_root):
+            raise ValueError("RLinf gym config must stay within the package.")
+        resolved = _try_resolve(candidate)
+        if resolved is None:
+            raise FileNotFoundError(f"RLinf gym config not found: {candidate}")
+        return resolved
+
+    if rel_path is not None and rel_path.parts[:2] == (
+        "embodichain_tasks",
+        "configs",
+    ):
+        from embodichain.utils.config_paths import resolve_config_path
+
+        candidate = Path(resolve_config_path(rel_path))
+        resolved = _try_resolve(candidate)
+        if resolved is not None:
+            return resolved
+
     root = os.environ.get("EMBODICHAIN_PATH")
     if root and rel_path is not None:
         resolved = _try_resolve(Path(root).expanduser().resolve() / rel_path)
@@ -149,9 +170,11 @@ def _config_task_prompt(
     environment = config.get("environment")
     if not isinstance(environment, Mapping) or "component" not in environment:
         return None
-    component_path = Path(str(environment["component"])).expanduser()
-    if not component_path.is_absolute():
-        component_path = config_path.parent / component_path
+    from embodichain.utils.config_paths import resolve_config_path
+
+    component_path = resolve_config_path(
+        str(environment["component"]), base_dir=config_path.parent
+    )
     if not component_path.is_file():
         return None
     return _text_from_value(load_config(component_path))
@@ -391,8 +414,6 @@ class EmbodiChainEnv(gym.Env):
             discover_task_packages,
             execute_init_hooks,
         )
-        from embodichain.lab.sim import SimulationManagerCfg
-        from embodichain.utils.config_paths import resolve_config_path
         from embodichain.utils.utility import load_config
 
         gym_config_path_cfg = _cfg_get(self.cfg, "gym_config_path")
@@ -404,14 +425,12 @@ class EmbodiChainEnv(gym.Env):
         discover_task_packages()
         execute_init_hooks()
 
+        # Source checkouts also register the tasks when their entry-point
+        # metadata has not yet been installed.
+        from rlinf.envs.sim.embodichain import tasks  # noqa: F401
+
         gym_config_path_str = str(gym_config_path_cfg)
-        # load_config resolves repository-style embodichain_tasks/configs/...
-        # paths from the installed wheel; fall back to local/EMBODICHAIN_PATH
-        # resolution for absolute or legacy relative configs.
-        if gym_config_path_str.startswith("embodichain_tasks/"):
-            gym_config_path = Path(resolve_config_path(gym_config_path_str))
-        else:
-            gym_config_path = _resolve_gym_config_path(gym_config_path_str)
+        gym_config_path = _resolve_gym_config_path(gym_config_path_str)
         gym_config = load_config(gym_config_path)
         if self.task_prompt is None:
             self.task_prompt = _config_task_prompt(
@@ -436,11 +455,9 @@ class EmbodiChainEnv(gym.Env):
         )
         env_cfg.num_envs = self.num_envs
         env_cfg.max_episode_steps = self.max_episode_steps
-        env_cfg.sim_cfg = SimulationManagerCfg(
-            headless=bool(_cfg_get(self.cfg, "headless", True)),
-            sim_device=self._sim_device,
-            gpu_id=self._gpu_id,
-        )
+        env_cfg.sim_cfg.headless = bool(_cfg_get(self.cfg, "headless", True))
+        env_cfg.sim_cfg.sim_device = self._sim_device
+        env_cfg.sim_cfg.gpu_id = self._gpu_id
         if bool(_cfg_get(self.cfg, "is_eval", False)) or bool(
             _cfg_get(self.cfg, "disable_dataset_recording", False)
         ):

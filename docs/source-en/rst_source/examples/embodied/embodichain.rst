@@ -402,17 +402,45 @@ actually applied, including any correction. The recorder, environment, and
 model process close on completion or failure, and the caller's precision is
 restored. The child owns its inference RNG; reset seeds control the environment.
 
+RLinf owns the single-cycle ``RLinf-PickPlace-v1`` task, the Franka deployment
+that faces the workspace, and the two VLA camera components under
+``rlinf/envs/sim/embodichain/``. Installing RLinf registers the task through
+EmbodiChain's ``embodichain.tasks`` entry point; the RLinf adapter also imports
+it directly for source-checkout runs. Spatial and split environment components
+remain in EmbodiChain. The deployments select those packaged components using
+``embodichain_tasks/configs/...`` paths, so they require the corresponding
+`EmbodiChain spatial-validation update <https://github.com/DexForce/EmbodiChain/pull/737>`_. The task and camera YAML files are
+included in the RLinf wheel. Use the ``rlinf/...`` config paths with the RLinf
+adapter from any working directory, or absolute paths with the EmbodiChain CLI.
+
+The dependency installer may leave the RLinf project uninstalled. Before using
+the EmbodiChain CLI for these tasks, install the matching SDK update and RLinf
+in that CLI's Python environment so it can resolve the components and discover
+the task entry point:
+
+.. code:: bash
+
+   python -m pip install --no-deps git+https://github.com/DexForce/EmbodiChain.git@96ff59b848fe995db3acf2086e91f1db3dc23a7a
+   python -m pip install --no-deps -e /path/to/RLinf
+
+Use the current SDK's official CobotMagic V4 assets for pouring. Download them
+with ``python -m embodichain.data download --name CobotMagicArm`` in the same
+environment. Keep V3 assets in a separate data root when reproducing the
+historical V3 campaign. The archived V3 policy results do not establish V4
+success rates; generate new smoke data and train-only statistics when moving
+the experiment to V4.
+
 Generate the two smoke splits before starting SFT:
 
 .. code:: bash
 
-   embodichain run-env --gym_config /path/to/EmbodiChain/embodichain_tasks/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_smoke_train.yaml --headless --device cuda
-   embodichain run-env --gym_config /path/to/EmbodiChain/embodichain_tasks/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_smoke_val.yaml --headless --device cuda
-   embodichain run-env --gym_config /path/to/EmbodiChain/embodichain_tasks/configs/tasks/manipulation/pick_place/task.franka_smoke_train.yaml --headless --device cuda
-   embodichain run-env --gym_config /path/to/EmbodiChain/embodichain_tasks/configs/tasks/manipulation/pick_place/task.franka_smoke_val.yaml --headless --device cuda
+   embodichain run-env --gym_config /path/to/RLinf/rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_smoke_train.yaml --headless --device cuda
+   embodichain run-env --gym_config /path/to/RLinf/rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_smoke_val.yaml --headless --device cuda
+   embodichain run-env --gym_config /path/to/RLinf/rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/task.franka_smoke_train.yaml --headless --device cuda
+   embodichain run-env --gym_config /path/to/RLinf/rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/task.franka_smoke_val.yaml --headless --device cuda
 
 The smoke data is generated with the paired ``*_smoke_train`` and
-``*_smoke_val`` EmbodiChain configs. Generate formal train and OOD datasets
+``*_smoke_val`` deployments in RLinf. Generate formal train and OOD datasets
 only after both tasks pass the numerical and unassisted closed-loop smoke
 gates.
 
@@ -510,8 +538,8 @@ hash, and task configs in a reproducibility manifest:
      --task pour_water --profile smoke --seed 0 --action-dim 14 --state-dim 14 \
      --split train=/data/embodichain/pour_water/smoke/train \
      --split val=/data/embodichain/pour_water/smoke/val \
-     --config train=/path/to/EmbodiChain/embodichain_tasks/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_smoke_train.yaml \
-     --config val=/path/to/EmbodiChain/embodichain_tasks/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_smoke_val.yaml \
+     --config train=/path/to/RLinf/rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_smoke_train.yaml \
+     --config val=/path/to/RLinf/rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_smoke_val.yaml \
      --embodichain-path /path/to/EmbodiChain \
      --output /data/embodichain/pour_water/smoke/manifest.json
 
@@ -551,7 +579,7 @@ Run the same checkpoint in closed loop after the action-error gate passes:
 .. code:: bash
 
    PYTHONPATH=$PWD python toolkits/standalone_eval_scripts/embodichain_openpi_eval.py \
-     --task-config /path/to/EmbodiChain/embodichain_tasks/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_ood.yaml \
+     --task-config /path/to/RLinf/rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_ood.yaml \
      --checkpoint-dir /path/to/results/pi05_smoke \
      --action-dim 14 \
      --norm-stats-path /path/to/results/pi05_smoke/norm_stats.json \

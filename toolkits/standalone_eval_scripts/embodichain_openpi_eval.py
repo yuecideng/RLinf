@@ -30,7 +30,10 @@ sys.path[:] = [
     entry for entry in sys.path if Path(entry or ".").resolve() != _SCRIPT_DIR
 ]
 
-from rlinf.envs.sim.embodichain.embodichain_env import EmbodiChainEnv  # noqa: E402
+from rlinf.envs.sim.embodichain.embodichain_env import (  # noqa: E402
+    EmbodiChainEnv,
+    _resolve_gym_config_path,
+)
 from toolkits.lerobot.calculate_norm_stats import (  # noqa: E402
     _parse_delta_action_mask,
 )
@@ -383,17 +386,7 @@ def _is_pour_water_task(task_config: str, env: EmbodiChainEnv | None = None) -> 
         identifier = getattr(spec, "id", None)
         if identifier:
             return str(identifier).casefold().split("-v", 1)[0] == "pourwater"
-    path = Path(task_config).expanduser()
-    if not path.is_file() and str(task_config).startswith("embodichain_tasks/"):
-        from embodichain.utils.config_paths import resolve_config_path
-
-        path = Path(resolve_config_path(task_config))
-    if not path.is_file():
-        from rlinf.envs.sim.embodichain.embodichain_env import (
-            _resolve_gym_config_path,
-        )
-
-        path = _resolve_gym_config_path(str(task_config))
+    path = _resolve_gym_config_path(str(task_config))
     identifier = OmegaConf.load(path).get("id", "")
     return str(identifier).casefold().split("-v", 1)[0] == "pourwater"
 
@@ -727,7 +720,7 @@ def evaluate(
             "episodes": num_episodes,
             "checkpoint": str(Path(checkpoint_dir).expanduser().resolve()),
             "config_name": config_name,
-            "task_config": str(Path(task_config).expanduser().resolve()),
+            "task_config": str(_resolve_gym_config_path(task_config)),
             "model_matmul_precision": model_matmul_precision,
             "sim_matmul_precision": _SIM_MATMUL_PRECISION,
             "model_tf32_flags": model_tf32_flags,

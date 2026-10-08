@@ -1,0 +1,12 @@
+id: PourWater-v1
+
+environment:
+  component: embodichain_tasks/configs/tasks/manipulation/tableware/pour_water/env_smoke.yaml
+
+task_program:
+  program: embodichain_tasks/configs/tasks/manipulation/tableware/pour_water/task_program/program.yaml
+  integration: embodichain_tasks/configs/tasks/manipulation/tableware/pour_water/task_program/integration.yaml
+  execution_policy: embodichain_tasks/configs/components/execution_policies/trajectory_open_loop_dense.yaml
+
+embodiment:
+  component: ../../../../components/embodiments/cobotmagic_vla.yaml

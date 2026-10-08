@@ -986,6 +986,68 @@ def test_pick_scoring_ignores_pour_words_in_deployment_path(
     assert report["strict_geometry_successes"] == 0
 
 
+def test_rlinf_pour_scoring_and_report_ignore_cwd_shadow(
+    embodied_evaluator_pose_fixture, monkeypatch, tmp_path
+):
+    """A package deployment controls scoring and provenance despite a CWD copy."""
+    from rlinf.envs.sim.embodichain import embodichain_env
+
+    relative = Path(
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/"
+        "pour_water/task.cobotmagic_smoke_val.yaml"
+    )
+    expected = (
+        Path(embodichain_env.__file__).resolve().parent
+        / "configs/tasks/manipulation/tableware/pour_water/"
+        "task.cobotmagic_smoke_val.yaml"
+    )
+    assert expected.is_file()
+    shadow = tmp_path / relative
+    shadow.parent.mkdir(parents=True)
+    shadow.write_text("id: RLinf-PickPlace-v1\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("EMBODICHAIN_PATH", str(tmp_path))
+
+    report, _ = embodied_evaluator_pose_fixture(
+        task_config=str(relative),
+        native_task_id=None,
+        pour=True,
+        physical_sequence=True,
+        raw_success=False,
+        terminated=False,
+    )
+    assert report["successes"] == report["strict_geometry_successes"] == 1
+    assert report["task_success_source"] == "pour_water_physical"
+    assert report["task_config"] == str(expected.resolve())
+
+
+def test_rlinf_pick_scoring_uses_identity_at_pour_named_path(
+    embodied_evaluator_pose_fixture, tmp_path
+):
+    """Renaming the real single-cycle Pick deployment preserves its info verdict."""
+    from rlinf.envs.sim.embodichain import embodichain_env
+
+    original = (
+        Path(embodichain_env.__file__).resolve().parent
+        / "configs/tasks/manipulation/pick_place/task.franka_smoke_val.yaml"
+    )
+    assert OmegaConf.load(original).id == "RLinf-PickPlace-v1"
+    relocated = tmp_path / "pour_water" / "task.PourWater.yaml"
+    relocated.parent.mkdir()
+    relocated.write_bytes(original.read_bytes())
+    report, _ = embodied_evaluator_pose_fixture(
+        task_config=relocated,
+        native_task_id=None,
+        pour=False,
+        physical_sequence=False,
+        raw_success=True,
+        terminated=True,
+    )
+    assert report["successes"] == 1 and report["task_success_source"] == "info"
+    assert report["strict_geometry_successes"] == 0
+    assert report["task_config"] == str(relocated.resolve())
+
+
 def test_embodichain_scoring_prefers_public_environment_identity(
     embodied_evaluator_pose_fixture, tmp_path
 ):

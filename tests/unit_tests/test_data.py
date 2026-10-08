@@ -726,6 +726,8 @@ def test_embodichain_evaluator_uses_model_process(
     )
     norm_stats = tmp_path / "norm_stats.json"
     norm_stats.write_text("{}")
+    task_config = tmp_path / "pick_place.yaml"
+    task_config.write_text("id: RLinf-PickPlace-v1\n")
     observations = []
 
     def observe(where):
@@ -834,9 +836,9 @@ def test_embodichain_evaluator_uses_model_process(
     try:
         if raise_in_model:
             with pytest.raises(RuntimeError, match="model process failed"):
-                module.evaluate("pick_place.yaml", "checkpoint", **kwargs)
+                module.evaluate(str(task_config), "checkpoint", **kwargs)
         else:
-            report = module.evaluate("pick_place.yaml", "checkpoint", **kwargs)
+            report = module.evaluate(str(task_config), "checkpoint", **kwargs)
             assert report["inference_process_mode"] == "spawn"
             assert report["actor_process_pid"] == 12345
             assert report["eval_sft_image_crop"] is eval_sft_image_crop

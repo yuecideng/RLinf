@@ -1,8 +1,8 @@
-# Minimal online correction smoke settings for PickPlace-v1.
+# Minimal online correction smoke settings for RLinf-PickPlace-v1.
 # Compose this under env.train in an embodied DAgger config.
 env_type: embodichain
 
-gym_config_path: ${oc.env:EMBODICHAIN_CORRECTION_GYM_CONFIG,embodichain_tasks/configs/tasks/manipulation/pick_place/task.franka_smoke_val.yaml}
+gym_config_path: ${oc.env:EMBODICHAIN_CORRECTION_GYM_CONFIG,rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/task.franka_smoke_val.yaml}
 
 headless: true
 sim_device: cuda
