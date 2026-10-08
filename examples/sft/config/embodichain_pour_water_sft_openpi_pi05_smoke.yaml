@@ -1,0 +1,99 @@
+defaults:
+  - model/pi0_5@actor.model
+  - hybrid_engines/fsdp@actor.fsdp_config
+  - override hydra/job_logging: stdout
+  - _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout: all
+
+runner:
+  task_type: sft
+  logger:
+    log_path: "../results"
+    project_name: rlinf
+    experiment_name: "embodichain_pour_water_pi05_smoke"
+    logger_backends: ["tensorboard"]
+  max_epochs: -1
+  max_steps: 1000
+  val_check_interval: -1
+  save_interval: 100
+
+data:
+  # Override EMBODICHAIN_POUR_SMOKE_DATA for another local LeRobot root.
+  train_data_paths: ${oc.env:EMBODICHAIN_POUR_SMOKE_DATA,/workspace/datasets/embodichain_pi05_smoke/pour_water/train/cobotmagic_Commercial_pour_water_000}
+  num_workers: 2
+
+algorithm:
+  adv_type: gae
+
+actor:
+  group_name: "ActorGroup"
+  training_backend: "fsdp"
+  micro_batch_size: 1
+  global_batch_size: 32
+  seed: 0
+
+  model:
+    model_path: ${oc.env:PI05_BASE_MODEL,/workspace/models/pi05_base}
+    precision: null
+    action_dim: 14
+    num_action_chunks: 5
+    openpi:
+      task: sft
+      config_name: "pi05_embodichain_joint_state_v2"
+      action_horizon: 10
+      action_chunk: 5
+      action_env_dim: 14
+      model_action_dim: 32
+      num_images_in_input: 1
+      use_action_chunk_loss: false
+      num_steps: 5
+      discrete_state_input: true
+    openpi_data:
+      default_prompt: "Pour water from bottle to cup"
+      output_action_dim: 14
+      delta_action_mask: [true, true, true, true, true, true, true, true, true, true, true, true, true, true]
+      include_phase_input: false
+      phase_scale: 600.0
+      norm_stats_path: ${oc.env:EMBODICHAIN_POUR_SMOKE_NORM_STATS,/workspace/datasets/embodichain_pi05_smoke/pour_water/train/cobotmagic_Commercial_pour_water_000/norm_stats.json}
+
+  optim:
+    lr: 2.5e-5
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 1.0e-10
+    clip_grad: 1.0
+    total_training_steps: 1000
+    lr_warmup_steps: 100
+    lr_scheduler: "openpi_cosine"
+    num_cycles: 0.5
+    min_lr: 0.0
+
+  fsdp_config:
+    strategy: "fsdp"
+    sharding_strategy: "no_shard"
+    use_orig_params: true
+    gradient_checkpointing: false
+    checkpoint_format: dcp
+    checkpoint_communication_backend: gloo
+    save_full_model_weights: true
+    training_state_save_interval: 1000
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+
+reward:
+  use_reward_model: false
+
+critic:
+  use_critic_model: false

@@ -1,0 +1,12 @@
+defaults:
+  - embodichain_pick_place_sft_openpi_pi05_smoke_gripper_absolute
+  - _self_
+
+cluster:
+  component_placement:
+    actor,env,rollout: 3-6
+
+actor:
+  fsdp_config:
+    # Avoid the DCP/NCCL scatter path on the current Blackwell setup.
+    checkpoint_format: dcp

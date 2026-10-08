@@ -1,0 +1,15 @@
+defaults:
+  - embodichain_pick_place_sft_openpi_pi05_smoke_state_4gpu
+  - _self_
+
+runner:
+  logger:
+    experiment_name: "embodichain_pick_place_pi05_smoke_state_phase"
+
+actor:
+  model:
+    openpi_data:
+      # The 60-step grasp hold has nearly identical images and qpos. Elapsed
+      # control steps provide the same time input in recordings and rollout.
+      include_phase_input: true
+      phase_scale: 600.0

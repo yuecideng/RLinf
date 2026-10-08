@@ -1,0 +1,10 @@
+defaults:
+  - embodichain_pick_place_sft_openpi_pi05_smoke
+  - _self_
+
+# A 32 GB+ GPU is sufficient for the <50-episode smoke run.  Keep this
+# override in a separate recipe so the multi-GPU smoke recipe remains explicit.
+# Override component_placement to select another local GPU.
+cluster:
+  component_placement:
+    actor,env,rollout: 0

@@ -1,0 +1,15 @@
+defaults:
+  - embodichain_pick_place_sft_openpi_pi05_smoke_4gpu
+  - _self_
+
+runner:
+  logger:
+    experiment_name: "embodichain_pick_place_pi05_smoke_state"
+
+actor:
+  model:
+    openpi:
+      # Match ManiSkill's joint-space PI 0.5 state conditioning without its
+      # additional RLT objective. The loader and evaluator use this config.
+      config_name: "pi05_embodichain_joint_state_v2"
+      discrete_state_input: true

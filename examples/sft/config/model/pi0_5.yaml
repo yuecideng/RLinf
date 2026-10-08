@@ -44,6 +44,11 @@ openpi:
   action_env_dim: ${..action_dim}
   # Pi0 model shape: padded action dim, LLM/expert variants, prompt token budget.
   model_action_dim: 32
+  # Keep the full action horizon in the SFT loss by default. EmbodiChain joint
+  # recipes opt in because their rollout executes only the first action chunk.
+  use_action_chunk_loss: false
+  # Inference-only compatibility with the fixed train=True/rng=None image crop.
+  eval_sft_image_crop: false
   paligemma_variant: "gemma_2b"
   action_expert_variant: "gemma_300m"
   max_token_len: 200

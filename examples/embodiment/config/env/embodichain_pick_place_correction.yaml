@@ -1,0 +1,33 @@
+# Minimal online correction smoke settings for PickPlace-v1.
+# Compose this under env.train in an embodied DAgger config.
+env_type: embodichain
+
+gym_config_path: ${oc.env:EMBODICHAIN_CORRECTION_GYM_CONFIG,embodichain_tasks/configs/tasks/manipulation/pick_place/task.franka_smoke_val.yaml}
+
+headless: true
+sim_device: cuda
+state_keys: [qpos]
+main_camera_uid: cam_high
+wrist_camera_uids: []
+
+seed: 4102
+total_num_envs: 1
+group_size: 1
+auto_reset: false
+ignore_terminations: false
+max_steps_per_rollout_epoch: 225
+max_episode_steps: 225
+is_eval: false
+
+# PickPlaceEnv computes a fresh contact-valid expert joint target on each
+# intervention request; the target is still applied through env.step().
+correction:
+  enabled: true
+  max_steps: 50
+  force_steps: 10
+  deviation_threshold: 0.05
+
+video_cfg:
+  save_video: true
+  info_on_video: true
+  video_base_dir: ${runner.logger.log_path}/video/correction

@@ -1,0 +1,30 @@
+defaults:
+  - embodichain_pick_place_sft_openpi_pi05_smoke
+  - _self_
+
+runner:
+  logger:
+    experiment_name: "embodichain_pick_place_pi05"
+  max_steps: 30000
+  save_interval: 1000
+
+data:
+  # Override EMBODICHAIN_PICK_FORMAL_DATA after formal generation.
+  train_data_paths: ${oc.env:EMBODICHAIN_PICK_FORMAL_DATA,/workspace/datasets/embodichain_pi05_formal/pick_place/train/frankapanda_tabletop_pick_and_place_000}
+  num_workers: 4
+
+cluster:
+  component_placement:
+    actor,env,rollout: 3-6
+
+actor:
+  seed: 0
+  fsdp_config:
+    checkpoint_format: dcp
+  model:
+    openpi_data:
+      # Formal stats must be computed from the formal train split, never smoke.
+      norm_stats_path: ${oc.env:EMBODICHAIN_PICK_FORMAL_NORM_STATS,/workspace/datasets/embodichain_pi05_formal/pick_place/train/norm_stats.json}
+  optim:
+    total_training_steps: 30000
+    lr_warmup_steps: 1000

@@ -1,0 +1,14 @@
+defaults:
+  - embodichain_pick_place_sft_openpi_pi05_smoke
+  - _self_
+
+runner:
+  logger:
+    experiment_name: "embodichain_pick_place_pi05_smoke_gripper_absolute"
+
+actor:
+  model:
+    openpi_data:
+      # Seven arm joints are state-relative; the two Franka finger targets are
+      # kept in absolute qpos units, matching ManiSkill RLT's gripper rule.
+      delta_action_mask: [true, true, true, true, true, true, true, false, false]

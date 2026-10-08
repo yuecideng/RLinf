@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import multiprocessing as mp
+import os
 import sys
 import time
 from pathlib import Path
@@ -28,6 +30,7 @@ import numpy as np
 import pytest
 import torch
 from omegaconf import OmegaConf
+from openpi.shared.normalize import NormStats
 
 from rlinf.algorithms.losses import compute_ppo_critic_loss
 from rlinf.config import SupportedModel
@@ -40,6 +43,7 @@ from rlinf.models.embodiment.openpi.apxinf_adapter import (
     OpenPIApxInfAdapter,
     _active_token_ids,
 )
+from rlinf.models.embodiment.openpi.pi0 import Pi0
 from rlinf.scheduler import Worker
 from rlinf.utils.env_helpers import HistoryManager
 from rlinf.utils.env_helpers.delay_sampler import (
@@ -60,6 +64,195 @@ class _DummyModel:
         return self
 
 
+def _openpi_predictor_test_worker(
+    connection, checkpoint_dir, norm_stats_path, model_kwargs, noise_seed, zero_noise
+):
+    """Replace the external model at the spawned process boundary."""
+    from toolkits.lerobot import evaluate_embodichain_openpi as offline
+    from toolkits.standalone_eval_scripts import openpi_process_predictor as predictor
+
+    class CPUModel:
+        device = torch.device("cpu")
+        action_dim = 32
+        action_horizon = 10
+
+        def predict_action_batch(self, observation, *, mode, rng, noise):
+            assert mode == "eval"
+            assert "goal_pose" not in observation
+            assert isinstance(observation["states"], np.ndarray)
+            assert observation.get("wrist_images") is None
+            prompt = observation["task_descriptions"][0]
+            if prompt == "fail":
+                raise RuntimeError("model prediction failed")
+            if prompt == "hang":
+                time.sleep(2.0)
+            observation["states"][...] = 123.0
+            observation["main_images"][...] = 255
+            sampled = (
+                noise if noise is not None else torch.randn((1, 10, 32), generator=rng)
+            )
+            return sampled[..., : model_kwargs["output_action_dim"]], {}
+
+    def build(*_args, **_kwargs):
+        if checkpoint_dir == "fail":
+            raise RuntimeError("model initialization failed")
+        assert _kwargs["eval_sft_image_crop"] is model_kwargs["eval_sft_image_crop"]
+        return CPUModel(), None, None
+
+    offline._build_model = build
+    offline._stage_checkpoint = lambda *_args: (
+        Path(norm_stats_path).parent,
+        SimpleNamespace(cleanup=lambda: None),
+    )
+    predictor._model_process(
+        connection,
+        checkpoint_dir,
+        norm_stats_path,
+        model_kwargs,
+        noise_seed,
+        zero_noise,
+    )
+
+
+def _openpi_predictor_sleep_worker(*_args):
+    """Represent a model process that does not finish initialization."""
+    time.sleep(5.0)
+
+
+@pytest.mark.parametrize(
+    ("action_dim", "config_name", "zero_noise", "eval_sft_image_crop"),
+    [
+        (9, "pi05_embodichain_joint_state_v2", False, False),
+        (14, "pi05_embodichain_joint", False, True),
+        (9, "pi05_embodichain_joint_state_v2", True, True),
+    ],
+)
+def test_openpi_process_predictor_preserves_observations_and_noise(
+    monkeypatch, tmp_path, action_dim, config_name, zero_noise, eval_sft_image_crop
+):
+    """Spawn isolation preserves CPU inputs and one RNG across episode resets."""
+    from toolkits.standalone_eval_scripts import openpi_process_predictor as module
+
+    monkeypatch.setattr(module, "_model_process", _openpi_predictor_test_worker)
+    stats = tmp_path / "norm_stats.json"
+    stats.write_text("{}")
+    observation = {
+        "states": torch.zeros((1, action_dim)),
+        "main_images": torch.zeros((1, 4, 5, 3), dtype=torch.uint8),
+        "wrist_images": None,
+        "episode_steps": torch.zeros(1, dtype=torch.int64),
+        "task_descriptions": ["pick and place"],
+        "goal_pose": np.eye(4),
+    }
+    previous = torch.get_float32_matmul_precision()
+    torch.set_float32_matmul_precision("medium")
+    model = None
+    try:
+        model = module.OpenPIProcessPredictor(
+            "checkpoint",
+            config_name=config_name,
+            output_action_dim=action_dim,
+            norm_stats_path=str(stats),
+            num_steps=5,
+            device="cpu",
+            include_phase_input=action_dim == 9,
+            phase_scale=600.0,
+            delta_action_mask=[True] * action_dim,
+            noise_seed=41,
+            zero_noise=zero_noise,
+            eval_sft_image_crop=eval_sft_image_crop,
+        )
+        assert model.process_pid != os.getpid()
+        expected_rng = torch.Generator().manual_seed(41)
+        for _ in range(2):
+            actions, diagnostics = model.predict_action_batch(observation)
+            expected = (
+                torch.zeros((1, 10, 32))
+                if zero_noise
+                else torch.randn((1, 10, 32), generator=expected_rng)
+            )
+            torch.testing.assert_close(actions, expected[..., :action_dim])
+            assert actions.device.type == "cpu"
+            assert diagnostics["shape"] == [1, 10, action_dim]
+            assert diagnostics["matmul_precision"] == "high"
+            assert diagnostics["tf32_flags"]["cuda_matmul_allow_tf32"] is True
+            assert torch.get_float32_matmul_precision() == "medium"
+            assert torch.count_nonzero(observation["states"]) == 0
+            assert torch.count_nonzero(observation["main_images"]) == 0
+        provenance = model.metadata["provenance"]
+        assert provenance["config_name"] == config_name
+        assert provenance["output_action_dim"] == action_dim
+        assert provenance["include_phase_input"] is (action_dim == 9)
+        assert provenance["delta_action_mask"] == [True] * action_dim
+        assert provenance["noise_seed"] == 41
+        assert provenance["eval_sft_image_crop"] is eval_sft_image_crop
+        model.close()
+        model.close()
+        assert model.metadata["close_response"]["inference_calls"] == 2
+        assert model.metadata["process_exit_code"] == 0
+        assert model.metadata["process_alive_after_close"] is False
+        with pytest.raises(RuntimeError, match="closed"):
+            model.predict_action_batch(observation)
+    finally:
+        if model is not None:
+            model.close()
+        torch.set_float32_matmul_precision(previous)
+
+
+@pytest.mark.parametrize("failure", ["initialize", "predict", "timeout"])
+def test_openpi_process_predictor_closes_failed_worker(monkeypatch, tmp_path, failure):
+    """Model errors and prediction timeouts leave no live owned process."""
+    from toolkits.standalone_eval_scripts import openpi_process_predictor as module
+
+    monkeypatch.setattr(module, "_model_process", _openpi_predictor_test_worker)
+    stats = tmp_path / "norm_stats.json"
+    stats.write_text("{}")
+    kwargs = {
+        "config_name": "pi05_embodichain_joint_state_v2",
+        "output_action_dim": 9,
+        "norm_stats_path": str(stats),
+        "num_steps": 5,
+        "device": "cpu",
+        "prediction_timeout_s": 0.05 if failure == "timeout" else 120.0,
+    }
+    children_before = {child.pid for child in mp.active_children()}
+    if failure == "initialize":
+        with pytest.raises(RuntimeError, match="model initialization failed"):
+            module.OpenPIProcessPredictor("fail", **kwargs)
+    else:
+        model = module.OpenPIProcessPredictor("checkpoint", **kwargs)
+        observation = {
+            "states": np.zeros((1, 9), dtype=np.float32),
+            "main_images": np.zeros((1, 4, 5, 3), dtype=np.uint8),
+            "task_descriptions": ["hang" if failure == "timeout" else "fail"],
+        }
+        exception = TimeoutError if failure == "timeout" else RuntimeError
+        with pytest.raises(exception, match="timed out|model prediction failed"):
+            model.predict_action_batch(observation)
+        model.close()
+        assert model.metadata["process_alive_after_close"] is False
+    assert {child.pid for child in mp.active_children()} == children_before
+
+
+def test_openpi_process_predictor_rolls_back_startup_timeout(monkeypatch, tmp_path):
+    """A worker that never sends ready is terminated before construction raises."""
+    from toolkits.standalone_eval_scripts import openpi_process_predictor as module
+
+    monkeypatch.setattr(module, "_model_process", _openpi_predictor_sleep_worker)
+    children_before = {child.pid for child in mp.active_children()}
+    with pytest.raises(TimeoutError, match="initialize"):
+        module.OpenPIProcessPredictor(
+            "checkpoint",
+            config_name="pi05_embodichain_joint_state_v2",
+            output_action_dim=9,
+            norm_stats_path=str(tmp_path / "norm_stats.json"),
+            num_steps=5,
+            device="cpu",
+            startup_timeout_s=0.05,
+        )
+    assert {child.pid for child in mp.active_children()} == children_before
+
+
 class _DummyBlock(torch.nn.Module):
     def __init__(self):
         super().__init__()
@@ -72,6 +265,140 @@ class _DummyFSDPModel(torch.nn.Module):
         self.block = _DummyBlock()
         self.head = torch.nn.Linear(4, 2)
         self.head._fsdp_wrap_name = "custom_head"
+
+
+class _ImagePreprocessingPi0(Pi0):
+    """Small image-conditioned model exercising the public Euler sampler."""
+
+    def __init__(self, eval_sft_image_crop: bool = False):
+        torch.nn.Module.__init__(self)
+        self.action_dim = 32
+        self.action_horizon = 10
+        self.eval_sft_image_crop = eval_sft_image_crop
+        self.dropout = torch.nn.Dropout(0.5)
+
+    def build_prefix_cache(self, observation):
+        signal = self.dropout(observation.images["base_0_rgb"].mean(dim=(1, 2, 3)))
+        return None, None, signal
+
+    def run_suffix(self, _observation, state, _time, cache, _prefix_mask):
+        return cache[:, None, None].expand_as(state)
+
+    def velocity_from_suffix(self, suffix):
+        return suffix
+
+
+@pytest.mark.parametrize("eval_sft_image_crop", [False, True])
+@pytest.mark.parametrize(
+    "device",
+    [
+        "cpu",
+        pytest.param(
+            "cuda",
+            marks=pytest.mark.skipif(
+                not torch.cuda.is_available(), reason="CUDA device is unavailable"
+            ),
+        ),
+    ],
+)
+def test_openpi_eval_sft_image_crop_is_exact_and_preserves_inference_state(
+    eval_sft_image_crop,
+    device,
+):
+    """The opt-in sampler uses exact deterministic SFT pixels without dropout."""
+    from rlinf.models.embodiment.openpi.modules import model as model_module
+
+    x = torch.linspace(-1.0, 1.0, 224, device=device)
+    yy, xx = torch.meshgrid(x, x, indexing="ij")
+    image = torch.stack((xx, yy, xx * yy), dim=-1).unsqueeze(0)
+    observation = model_module.Observation(
+        images={key: image.clone() for key in model_module.IMAGE_KEYS},
+        image_masks={
+            key: torch.tensor(["wrist" not in key], dtype=torch.bool, device=device)
+            for key in model_module.IMAGE_KEYS
+        },
+        state=torch.arange(32, dtype=torch.float32, device=device).reshape(1, 32),
+        tokenized_prompt=torch.arange(20, dtype=torch.int64, device=device).reshape(
+            1, 20
+        ),
+        tokenized_prompt_mask=torch.ones((1, 20), dtype=torch.bool, device=device),
+    )
+    expected = model_module.preprocess_observation(
+        observation, train=eval_sft_image_crop, rng=None
+    )
+    model = _ImagePreprocessingPi0(eval_sft_image_crop).to(device).eval()
+    before = torch.get_rng_state().clone()
+    cuda_before = torch.cuda.get_rng_state(device).clone() if device == "cuda" else None
+    prepared = model._preprocess_eval_observation(observation)
+    for key in observation.images:
+        assert torch.equal(prepared.images[key], expected.images[key])
+        assert torch.equal(prepared.image_masks[key], observation.image_masks[key])
+    assert torch.equal(prepared.state, observation.state)
+    assert torch.equal(prepared.tokenized_prompt, observation.tokenized_prompt)
+    assert torch.equal(
+        prepared.tokenized_prompt_mask, observation.tokenized_prompt_mask
+    )
+    assert torch.equal(torch.get_rng_state(), before)
+    noise = torch.zeros((1, 10, 32), device=device)
+    result = model.sample_actions(observation, noise=noise, num_steps=5)
+    expected_signal = expected.images["base_0_rgb"].mean(dim=(1, 2, 3))
+    torch.testing.assert_close(result, -expected_signal[:, None, None].expand_as(noise))
+    assert model.training is False
+    assert model.dropout.training is False
+    assert torch.equal(torch.get_rng_state(), before)
+    if cuda_before is not None:
+        assert torch.equal(torch.cuda.get_rng_state(device), cuda_before)
+    if not eval_sft_image_crop:
+        default = _ImagePreprocessingPi0().to(device).eval()
+        assert torch.equal(
+            default.sample_actions(observation, noise=noise, num_steps=5), result
+        )
+    else:
+        model.train()
+        with pytest.raises(ValueError, match="model.eval"):
+            model.sample_actions(observation, noise=noise, num_steps=5)
+
+
+@pytest.mark.parametrize("enabled", [None, False, True])
+def test_openpi_factory_forwards_eval_sft_image_crop(monkeypatch, tmp_path, enabled):
+    """Factory configuration reaches the inference model constructor."""
+    import rlinf.models.embodiment.openpi as factory
+    import rlinf.models.embodiment.openpi.tasks.eval as eval_task
+
+    class StubModel(torch.nn.Module):
+        def __init__(self, _config, **kwargs):
+            super().__init__()
+            self.eval_sft_image_crop = kwargs["eval_sft_image_crop"]
+
+    monkeypatch.setattr(eval_task, "Pi0Eval", StubModel)
+    monkeypatch.setattr(factory, "resolve_model_safetensors", lambda _path: None)
+    monkeypatch.setattr(
+        factory, "resolve_full_weights", lambda _path: tmp_path / "weights.pt"
+    )
+    monkeypatch.setattr(factory, "load_full_weights", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(factory, "_install_transforms", lambda *_args: None)
+    monkeypatch.setattr(factory, "_apply_openpi_param_dtypes", lambda *_args: None)
+    cfg = OmegaConf.create(
+        {
+            "model_path": str(tmp_path),
+            "precision": None,
+            "action_dim": 9,
+            "num_action_chunks": 5,
+            "num_steps": 5,
+            "openpi": {
+                "task": "eval",
+                "config_name": "pi05_embodichain_joint_state_v2",
+                "action_horizon": 10,
+                "model_action_dim": 32,
+                "paligemma_variant": "gemma_2b",
+                "action_expert_variant": "gemma_300m",
+                "eval_sft_image_crop": enabled,
+            },
+        }
+    )
+    if enabled is None:
+        del cfg.openpi.eval_sft_image_crop
+    assert factory.get_model(cfg).eval_sft_image_crop is bool(enabled)
 
 
 def test_custom_model_registration_smoke():
@@ -98,6 +425,684 @@ def test_custom_model_registration_smoke():
 
     assert isinstance(model, _DummyModel)
     assert received["torch_dtype"] == torch.float32
+
+
+def test_embodichain_joint_policy_pads_images_and_actions():
+    """EmbodiChain joint samples use one RGB view and a padded Pi05 action."""
+    from openpi.models import model as openpi_model
+
+    from rlinf.models.embodiment.openpi.policies.embodichain_policy import (
+        EmbodiChainJointInputs,
+        EmbodiChainJointOutputs,
+    )
+
+    inputs = EmbodiChainJointInputs(
+        action_dim=32,
+        output_action_dim=9,
+        model_type=openpi_model.ModelType.PI05,
+    )
+    sample = inputs(
+        {
+            "observation/image": np.zeros((4, 5, 4), dtype=np.uint8),
+            "observation/state": np.arange(9, dtype=np.float32),
+            "actions": np.ones((10, 9), dtype=np.float32),
+            "prompt": "pick and place",
+        }
+    )
+
+    assert sample["state"].shape == (32,)
+    assert sample["actions"].shape == (10, 32)
+    assert sample["image"]["base_0_rgb"].shape == (4, 5, 3)
+    assert sample["image"]["base_0_rgb"].dtype == np.uint8
+    assert bool(sample["image_mask"]["base_0_rgb"])
+    assert not bool(sample["image_mask"]["left_wrist_0_rgb"])
+    assert sample["prompt"] == "pick and place"
+
+    outputs = EmbodiChainJointOutputs(output_action_dim=9)(
+        {"actions": np.zeros((2, 10, 32), dtype=np.float32)}
+    )
+    assert outputs["actions"].shape == (2, 10, 9)
+
+
+@pytest.mark.parametrize("physical_dim", [9, 14])
+@pytest.mark.parametrize("include_phase", [False, True])
+def test_embodichain_joint_policy_can_defer_model_padding(physical_dim, include_phase):
+    """State-token recipes retain physical dimensions until model transforms."""
+    from openpi.models import model as openpi_model
+
+    from rlinf.models.embodiment.openpi.policies.embodichain_policy import (
+        EmbodiChainJointInputs,
+    )
+
+    step = np.asarray(37, dtype=np.int64)
+    sample = EmbodiChainJointInputs(
+        action_dim=32,
+        output_action_dim=physical_dim,
+        model_type=openpi_model.ModelType.PI05,
+        include_phase_input=include_phase,
+        phase_scale=600.0,
+        pad_inputs_to_model_dim=False,
+    )(
+        {
+            "observation/image": np.zeros((4, 5, 3), dtype=np.uint8),
+            "observation/state": np.arange(physical_dim, dtype=np.float32),
+            "observation/episode_step": step,
+            "actions": np.ones((10, physical_dim), dtype=np.float32),
+        }
+    )
+
+    assert sample["state"].shape == (physical_dim + int(include_phase),)
+    assert sample["actions"].shape == (10, physical_dim)
+    if include_phase:
+        assert sample["state"][-1] == pytest.approx(37.0 / 600.0)
+
+
+def test_embodichain_joint_policy_appends_episode_phase():
+    """The optional phase input occupies one padded state dimension."""
+    from openpi.models import model as openpi_model
+
+    from rlinf.models.embodiment.openpi.policies.embodichain_policy import (
+        EmbodiChainJointInputs,
+    )
+
+    inputs = EmbodiChainJointInputs(
+        action_dim=32,
+        output_action_dim=9,
+        model_type=openpi_model.ModelType.PI05,
+        include_phase_input=True,
+        phase_scale=100.0,
+    )
+    sample = inputs(
+        {
+            "observation/image": np.zeros((4, 5, 3), dtype=np.uint8),
+            "observation/state": np.zeros(9, dtype=np.float32),
+            "observation/episode_step": np.asarray(25, dtype=np.int32),
+        }
+    )
+
+    assert sample["state"].shape == (32,)
+    assert sample["state"][9] == pytest.approx(0.25)
+    assert np.all(sample["state"][10:] == 0.0)
+
+
+def test_embodichain_joint_policy_rejects_short_actions():
+    from openpi.models import model as openpi_model
+
+    from rlinf.models.embodiment.openpi.policies.embodichain_policy import (
+        EmbodiChainJointInputs,
+    )
+
+    inputs = EmbodiChainJointInputs(
+        action_dim=32,
+        output_action_dim=9,
+        model_type=openpi_model.ModelType.PI05,
+    )
+    with pytest.raises(ValueError, match="do not match"):
+        inputs(
+            {
+                "observation/image": np.zeros((4, 5, 3), dtype=np.uint8),
+                "observation/state": np.zeros(9, dtype=np.float32),
+                "actions": np.zeros((10, 7), dtype=np.float32),
+            }
+        )
+
+
+def test_embodichain_joint_policy_scales_normalized_float_images():
+    """Float images in the common [0, 1] range become uint8 RGB inputs."""
+    from openpi.models import model as openpi_model
+
+    from rlinf.models.embodiment.openpi.policies.embodichain_policy import (
+        EmbodiChainJointInputs,
+    )
+
+    inputs = EmbodiChainJointInputs(
+        action_dim=32,
+        output_action_dim=9,
+        model_type=openpi_model.ModelType.PI05,
+    )
+    sample = inputs(
+        {
+            "observation/image": np.full((2, 3, 3), 0.5, dtype=np.float32),
+            "observation/state": np.zeros(9, dtype=np.float32),
+        }
+    )
+
+    assert sample["image"]["base_0_rgb"].dtype == np.uint8
+    assert np.all(sample["image"]["base_0_rgb"] == 127)
+
+
+def test_embodichain_joint_policy_absolute_delta_roundtrip_with_norm_stats():
+    """Non-zero normalization stats do not alter absolute action decoding."""
+    from openpi import transforms
+    from openpi.models import model as openpi_model
+
+    from rlinf.models.embodiment.openpi.policies.embodichain_policy import (
+        EmbodiChainJointInputs,
+        EmbodiChainJointOutputs,
+    )
+
+    state = np.linspace(-0.8, 0.8, 9, dtype=np.float32)
+    absolute_actions = state + np.linspace(0.05, 0.5, 9, dtype=np.float32)
+    sample = {
+        "observation/image": np.zeros((4, 5, 3), dtype=np.uint8),
+        "observation/state": state,
+        "actions": np.stack([absolute_actions, absolute_actions + 0.1]),
+    }
+    data_input = EmbodiChainJointInputs(
+        action_dim=32,
+        output_action_dim=9,
+        model_type=openpi_model.ModelType.PI05,
+    )
+    converted = data_input(sample)
+    delta = transforms.DeltaActions(transforms.make_bool_mask(9))
+    restored_delta = transforms.AbsoluteActions(transforms.make_bool_mask(9))
+    stats = {
+        "state": NormStats(
+            mean=np.full(32, 0.25, dtype=np.float32),
+            std=np.full(32, 2.0, dtype=np.float32),
+        ),
+        "actions": NormStats(
+            mean=np.full(32, -0.4, dtype=np.float32),
+            std=np.full(32, 1.7, dtype=np.float32),
+        ),
+    }
+    delta_sample = delta(
+        {
+            key: value.copy() if isinstance(value, np.ndarray) else value
+            for key, value in converted.items()
+        }
+    )
+    normalized = transforms.Normalize(stats)(delta_sample)
+    unnormalized = transforms.Unnormalize(stats)(normalized)
+    decoded = restored_delta(unnormalized)
+    decoded = EmbodiChainJointOutputs(output_action_dim=9)(decoded)
+
+    np.testing.assert_allclose(decoded["actions"], sample["actions"], atol=1e-6)
+
+
+def test_openpi_sft_action_weights_preserve_mean_and_validate_shape():
+    """Optional SFT weights emphasize contact dims without changing scale."""
+    from rlinf.models.embodiment.openpi.pi0 import Pi0
+
+    model = object.__new__(Pi0)
+    model.action_chunk = 5
+    model.action_env_dim = 9
+    loss = torch.ones(2, 10, 32)
+    reduced = model._reduce_sft_loss(
+        loss,
+        use_action_chunk_loss=True,
+        action_loss_weights=[1.0] * 7 + [4.0, 4.0],
+        action_step_weights=[3.0, 2.0, 1.0, 1.0, 1.0],
+    )
+    assert reduced.item() == pytest.approx(1.0)
+    with pytest.raises(ValueError, match="action_loss_weights"):
+        model._reduce_sft_loss(
+            loss,
+            use_action_chunk_loss=True,
+            action_loss_weights=[1.0] * 8,
+        )
+
+
+def test_pour_water_strict_tracker_does_not_accept_return_pose_alone():
+    """Pour success requires configured pour geometry beyond the return pose."""
+    from toolkits.standalone_eval_scripts.embodichain_openpi_eval import (
+        _PourWaterPhysicalTracker,
+    )
+
+    tracker = _PourWaterPhysicalTracker(
+        torch.tensor([0.75, -0.10, 0.962]),
+        position_tolerance=0.05,
+        tilt_threshold=0.5,
+    )
+    tracker.final_position = torch.tensor([0.75, -0.10, 0.962])
+    tracker.max_tilt = 1.0
+    tracker.initial_matrix = torch.eye(4)
+    tracker.final_matrix = torch.eye(4)
+    tracker.pour_geometry_seen = False
+
+    result = tracker.result()
+    assert result["physical_proxy_success"] is True
+    assert result["strict_geometry_success"] is False
+
+    tracker.pour_geometry_seen = True
+    result = tracker.result()
+    assert result["strict_geometry_success"] is True
+
+
+@pytest.fixture
+def pour_tracker_pose_fixture():
+    """Expose mutable external object poses through their public reader API."""
+    from toolkits.standalone_eval_scripts import embodichain_openpi_eval as evaluator
+
+    class PoseAsset:
+        def __init__(self, position):
+            self.matrix = torch.eye(4)
+            self.matrix[:3, 3] = torch.tensor(position)
+            self.quaternion = torch.tensor([1.0, 0.0, 0.0, 0.0])
+
+        def get_local_pose(self, *, to_matrix):
+            if to_matrix:
+                return self.matrix.unsqueeze(0)
+            return self.matrix[:3, 3].unsqueeze(0), self.quaternion.unsqueeze(0)
+
+    bottle = PoseAsset([0.75, -0.10, 0.962])
+    cup = PoseAsset([0.75, 0.10, 0.90])
+    assets = {"bottle": bottle, "cup": cup}
+    env = SimpleNamespace(
+        env=SimpleNamespace(sim=SimpleNamespace(get_asset=lambda uid: assets[uid]))
+    )
+    tracker = evaluator._PourWaterPhysicalTracker(
+        torch.tensor([0.75, -0.10, 0.962]),
+        position_tolerance=0.05,
+        tilt_threshold=0.5,
+    )
+    tracker.reset(env)
+
+    def observe(*, axis, angle, at_target=False):
+        radians = torch.tensor(angle)
+        c, s = torch.cos(radians), torch.sin(radians)
+        if axis == "x":
+            rotation = torch.tensor([[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]])
+            quaternion = torch.tensor(
+                [torch.cos(radians / 2), torch.sin(radians / 2), 0.0, 0.0]
+            )
+        else:
+            rotation = torch.tensor([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+            quaternion = torch.tensor(
+                [torch.cos(radians / 2), 0.0, 0.0, torch.sin(radians / 2)]
+            )
+        bottle.matrix = (
+            cup.matrix @ evaluator._POUR_WATER_RELATIVE_POSE
+            if at_target
+            else torch.eye(4)
+        )
+        if not at_target:
+            bottle.matrix[:3, 3] = torch.tensor([0.75, -0.10, 0.962])
+        bottle.matrix[:3, :3] = rotation
+        bottle.quaternion = quaternion
+        tracker.update(env)
+        return tracker.result()
+
+    return tracker, observe
+
+
+def test_pour_water_proxy_excludes_pure_yaw(pour_tracker_pose_fixture):
+    tracker, observe = pour_tracker_pose_fixture
+    observe(axis="z", angle=0.708)
+    result = observe(axis="z", angle=0.0)
+    assert result["max_bottle_rotation"] == pytest.approx(0.708, abs=1e-6)
+    assert result["max_bottle_tilt"] == pytest.approx(0.0, abs=1e-6)
+    assert result["physical_proxy_success"] is False
+    assert result["min_pour_rotation_error_at_valid_position"] is None
+    assert result["position_match_frames"] == 0
+
+
+def test_pour_water_proxy_accepts_genuine_axis_tilt(pour_tracker_pose_fixture):
+    _, observe = pour_tracker_pose_fixture
+    observe(axis="x", angle=-0.7)
+    result = observe(axis="x", angle=0.0)
+    assert result["max_bottle_tilt"] == pytest.approx(0.7, abs=1e-6)
+    assert result["physical_proxy_success"] is True
+    # Tilt and return alone still do not establish the cup-relative pour pose.
+    assert result["strict_geometry_success"] is False
+
+
+def test_pour_water_diagnostics_require_same_frame_position_and_rotation(
+    pour_tracker_pose_fixture,
+):
+    from toolkits.standalone_eval_scripts import embodichain_openpi_eval as evaluator
+
+    _, observe = pour_tracker_pose_fixture
+    observe(axis="x", angle=0.0, at_target=True)
+    result = observe(axis="x", angle=evaluator._POUR_WATER_ROTATE_ANGLE)
+    assert result["min_pour_rotation_error"] == pytest.approx(0.0, abs=1e-6)
+    assert result["min_pour_rotation_error_at_valid_position"] == pytest.approx(
+        abs(evaluator._POUR_WATER_ROTATE_ANGLE), abs=1e-6
+    )
+    assert result["position_match_frames"] == result["rotation_match_frames"] == 1
+    assert result["joint_pour_pose_frames"] == 0
+    assert result["max_pour_dwell_frames"] == 0
+    result = observe(axis="x", angle=evaluator._POUR_WATER_ROTATE_ANGLE, at_target=True)
+    assert result["min_pour_rotation_error_at_valid_position"] == pytest.approx(
+        0.0, abs=1e-6
+    )
+    assert result["joint_pour_pose_frames"] == 1
+    assert result["max_pour_dwell_frames"] == 1
+
+
+@pytest.fixture
+def embodied_evaluator_pose_fixture(monkeypatch, tmp_path):
+    """Provide scripted external poses and model actions to the evaluator."""
+    from toolkits.standalone_eval_scripts import embodichain_openpi_eval as evaluator
+
+    class PoseAsset:
+        def __init__(self, position):
+            self.matrix = torch.eye(4)
+            self.matrix[:3, 3] = torch.tensor(position)
+            self.quaternion = torch.tensor([1.0, 0.0, 0.0, 0.0])
+
+        def get_local_pose(self, *, to_matrix):
+            if to_matrix:
+                return self.matrix.unsqueeze(0)
+            return self.matrix[:3, 3].unsqueeze(0), self.quaternion.unsqueeze(0)
+
+    class Predictor:
+        def __init__(self, checkpoint, *, output_action_dim, **kwargs):
+            self.action_horizon = 10
+            self.output_action_dim = output_action_dim
+            self.process_pid = os.getpid()
+            self.metadata = {
+                "matmul_precision": "high",
+                "tf32_flags": {},
+                "provenance": {"checkpoint": checkpoint},
+            }
+
+        def predict_action_batch(self, observation):
+            return torch.zeros(1, 10, self.output_action_dim), {}
+
+        def close(self):
+            self.metadata.update(
+                process_exit_code=0,
+                process_alive_after_close=False,
+                close_response={"type": "closed"},
+                close_error=None,
+            )
+
+    norm_path = tmp_path / "norm_stats.json"
+    norm_path.write_text('{"norm_stats": {}}')
+    monkeypatch.setattr(evaluator, "OpenPIProcessPredictor", Predictor)
+
+    def run(
+        *,
+        pour,
+        physical_sequence,
+        raw_success,
+        terminated,
+        fail=False,
+        task_config=None,
+        native_task_id=None,
+    ):
+        environments = []
+        action_dim = 14 if pour else 9
+
+        class ExternalEnv:
+            def __init__(self, cfg, **kwargs):
+                self.cfg = cfg
+                self.steps = 0
+                self.closed = False
+                self.assets = {
+                    "bottle": PoseAsset([0.75, -0.10, 0.962]),
+                    "cup": PoseAsset([0.75, 0.10, 0.90]),
+                }
+                self.env = SimpleNamespace(
+                    sim=SimpleNamespace(get_asset=lambda uid: self.assets[uid])
+                )
+                if native_task_id is not None:
+                    self.env.spec = SimpleNamespace(id=native_task_id)
+                environments.append(self)
+
+            def observation(self):
+                return {
+                    "states": torch.zeros(1, action_dim),
+                    "main_images": torch.zeros(1, 8, 8, 3, dtype=torch.uint8),
+                    "task_descriptions": ["Pour water" if pour else "Pick cube"],
+                }
+
+            def reset(self, *, seed):
+                return self.observation(), {}
+
+            def step(self, action):
+                self.steps += 1
+                bottle = self.assets["bottle"]
+                if physical_sequence and self.steps <= 5:
+                    target = (
+                        self.assets["cup"].matrix @ evaluator._POUR_WATER_RELATIVE_POSE
+                    )
+                    angle = torch.tensor(evaluator._POUR_WATER_ROTATE_ANGLE)
+                    c, s = torch.cos(angle), torch.sin(angle)
+                    bottle.matrix = target.clone()
+                    bottle.matrix[:3, :3] = target[:3, :3] @ torch.tensor(
+                        [[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]]
+                    )
+                    bottle.quaternion = torch.tensor(
+                        [torch.cos(angle / 2), torch.sin(angle / 2), 0.0, 0.0]
+                    )
+                elif physical_sequence and self.steps == 6:
+                    self.assets["bottle"] = PoseAsset([0.75, -0.10, 0.962])
+                elif physical_sequence:
+                    self.assets["bottle"] = PoseAsset([2.0, 2.0, 2.0])
+                return (
+                    self.observation(),
+                    torch.zeros(1),
+                    torch.tensor([terminated]),
+                    torch.tensor([False]),
+                    {
+                        "success": torch.tensor([raw_success]),
+                        "fail": torch.tensor([fail]),
+                    },
+                )
+
+            def close(self):
+                self.closed = True
+
+        monkeypatch.setattr(evaluator, "EmbodiChainEnv", ExternalEnv)
+        if task_config is None:
+            task_config = tmp_path / (
+                "pour_water_fixture.yaml" if pour else "pick_place_fixture.yaml"
+            )
+            task_config.write_text(
+                f"id: {'PourWater-v1' if pour else 'PickPlace-v1'}\n"
+            )
+        report = evaluator.evaluate(
+            str(task_config),
+            "fixture_checkpoint",
+            config_name="pi05_embodichain_joint_state_v2",
+            action_dim=action_dim,
+            norm_stats_path=str(norm_path),
+            num_episodes=1,
+            max_steps=8,
+            action_chunk=5,
+            num_steps=5,
+            include_phase_input=False,
+            phase_scale=600.0,
+            initial_hold_steps=0,
+            seed=0,
+            noise_seed=0,
+            zero_noise=False,
+            gripper_threshold=None,
+            gripper_open_steps=None,
+            gripper_close_step=None,
+            qpos_feedforward=0.0,
+            action_application_mode="target_position",
+            max_joint_step=None,
+            qpos_track_max_step=None,
+            action_settle_steps=1,
+            expert_correction=False,
+            correction_max_steps=0,
+            correction_threshold=0.05,
+            correction_force_steps=0,
+            delta_action_mask=[True] * action_dim,
+            position_tolerance=0.05,
+            tilt_threshold=0.5,
+            device="cpu",
+        )
+        assert environments[0].closed
+        assert report["inference_process_cleanup"]["process_exit_code"] == 0
+        return report, environments[0]
+
+    return run
+
+
+def test_pour_water_scoring_follows_same_deployment_at_renamed_path(
+    embodied_evaluator_pose_fixture, monkeypatch, tmp_path
+):
+    """Moving an identical Pour deployment keeps its strict geometry verdict."""
+    original = tmp_path / "pour_water" / "task.yaml"
+    original.parent.mkdir()
+    original.write_text(
+        "id: PourWater-v1\n"
+        "environment:\n  component: env_smoke_val.yaml\n"
+        "task_program:\n  program: task_program/program.yaml\n"
+        "  integration: task_program/integration.yaml\n"
+        "  execution_policy: components/trajectory_open_loop_dense.yaml\n"
+        "embodiment:\n  component: components/cobotmagic_vla.yaml\n"
+        "seed: 5101\n"
+    )
+    relocated = tmp_path / "generic_deployment.yaml"
+    relocated.write_bytes(original.read_bytes())
+    kwargs = {
+        "pour": True,
+        "physical_sequence": True,
+        "raw_success": False,
+        "terminated": False,
+    }
+    named, _ = embodied_evaluator_pose_fixture(task_config=original, **kwargs)
+    monkeypatch.setenv("EMBODICHAIN_PATH", str(tmp_path))
+    renamed, _ = embodied_evaluator_pose_fixture(task_config=relocated.name, **kwargs)
+    assert named["successes"] == renamed["successes"] == 1
+    assert (
+        named["task_success_source"]
+        == renamed["task_success_source"]
+        == "pour_water_physical"
+    )
+    assert named["per_episode"] == renamed["per_episode"]
+
+
+def test_pick_scoring_ignores_pour_words_in_deployment_path(
+    embodied_evaluator_pose_fixture, tmp_path
+):
+    """A Pick deployment retains environment scoring in a misleading folder."""
+    path = tmp_path / "pour_water" / "task.yaml"
+    path.parent.mkdir()
+    path.write_text("id: PickPlace-v1\n")
+    report, _ = embodied_evaluator_pose_fixture(
+        task_config=path,
+        pour=False,
+        physical_sequence=False,
+        raw_success=True,
+        terminated=True,
+    )
+    assert report["successes"] == 1 and report["task_success_source"] == "info"
+    assert report["strict_geometry_successes"] == 0
+
+
+def test_embodichain_scoring_prefers_public_environment_identity(
+    embodied_evaluator_pose_fixture, tmp_path
+):
+    """A registered native environment identifies package-resolved deployments."""
+    path = tmp_path / "generic.yaml"
+    path.write_text("id: PickPlace-v1\n")
+    pour, _ = embodied_evaluator_pose_fixture(
+        task_config=path,
+        native_task_id="PourWater-v1",
+        pour=True,
+        physical_sequence=True,
+        raw_success=False,
+        terminated=False,
+    )
+    assert pour["successes"] == 1
+    assert pour["task_success_source"] == "pour_water_physical"
+    path.write_text("id: PourWater-v1\n")
+    pick, _ = embodied_evaluator_pose_fixture(
+        task_config=path,
+        native_task_id="PickPlace-v1",
+        pour=False,
+        physical_sequence=False,
+        raw_success=True,
+        terminated=True,
+    )
+    assert pick["successes"] == 1 and pick["task_success_source"] == "info"
+
+
+@pytest.mark.parametrize("raw_success", [False, True])
+def test_pour_water_physical_completion_stops_without_program_execution(
+    embodied_evaluator_pose_fixture, raw_success
+):
+    report, env = embodied_evaluator_pose_fixture(
+        pour=True,
+        physical_sequence=True,
+        raw_success=raw_success,
+        terminated=raw_success,
+    )
+    assert report["successes"] == report["strict_geometry_successes"] == 1
+    assert report["task_program_successes"] == int(raw_success)
+    assert report["strict_task_program_successes"] == int(raw_success)
+    assert report["per_episode"][0]["max_pour_dwell_frames"] == 5
+    # A seventh action would move the completed bottle away from its return pose.
+    assert env.steps == report["per_episode"][0]["episode_length"] == 6
+
+
+@pytest.mark.parametrize("terminated", [False, True])
+def test_pour_water_raw_success_does_not_complete_physical_task(
+    embodied_evaluator_pose_fixture, terminated
+):
+    report, env = embodied_evaluator_pose_fixture(
+        pour=True, physical_sequence=False, raw_success=True, terminated=terminated
+    )
+    assert report["successes"] == report["strict_geometry_successes"] == 0
+    assert report["task_program_successes"] == 1
+    assert report["strict_task_program_successes"] == 0
+    assert env.steps == report["per_episode"][0]["episode_length"] == 8
+
+
+@pytest.mark.parametrize(
+    ("raw_success", "terminated", "fail", "expected_success"),
+    [(True, False, False, 1), (False, True, False, 0), (False, True, True, 0)],
+)
+def test_non_pour_evaluator_preserves_raw_success_and_termination(
+    embodied_evaluator_pose_fixture, raw_success, terminated, fail, expected_success
+):
+    report, env = embodied_evaluator_pose_fixture(
+        pour=False,
+        physical_sequence=False,
+        raw_success=raw_success,
+        terminated=terminated,
+        fail=fail,
+    )
+    assert report["successes"] == expected_success
+    assert report["task_success_source"] == "info"
+    assert env.steps == report["per_episode"][0]["episode_length"] == 1
+
+
+def test_pour_water_native_failure_still_ends_episode(
+    embodied_evaluator_pose_fixture,
+):
+    report, env = embodied_evaluator_pose_fixture(
+        pour=True,
+        physical_sequence=False,
+        raw_success=False,
+        terminated=True,
+        fail=True,
+    )
+    assert report["successes"] == 0
+    assert env.steps == report["per_episode"][0]["episode_length"] == 1
+
+
+@pytest.mark.parametrize(
+    ("model_type", "use_chunk_loss", "expected"),
+    [
+        ("openpi", False, False),
+        ("openpi", True, True),
+        ("mlp_policy", True, False),
+    ],
+)
+def test_openpi_sft_chunk_loss_requires_explicit_opt_in(
+    model_type, use_chunk_loss, expected
+):
+    """Only recipes that explicitly opt in receive chunk-only SFT loss."""
+    from rlinf.workers.sft.fsdp_vla_sft_worker import _use_action_chunk_loss
+
+    cfg = OmegaConf.create(
+        {
+            "actor": {
+                "model": {
+                    "model_type": model_type,
+                    "openpi": {"use_action_chunk_loss": use_chunk_loss},
+                }
+            }
+        }
+    )
+    assert _use_action_chunk_loss(cfg) is expected
 
 
 def test_custom_model_registration_with_fsdp_wrap_policy():
@@ -912,9 +1917,9 @@ _fake_gym = MagicMock()
 _fake_gym.Env = _FakeGymEnv
 _fake_gym.Wrapper = _FakeGymWrapper
 
-if "gymnasium" not in sys.modules:
+if "gymnasium" not in sys.modules and importlib.util.find_spec("gymnasium") is None:
     sys.modules["gymnasium"] = _fake_gym
-if "imageio" not in sys.modules:
+if "imageio" not in sys.modules and importlib.util.find_spec("imageio") is None:
     sys.modules["imageio"] = MagicMock()
 
 

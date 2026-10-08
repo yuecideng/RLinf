@@ -68,6 +68,7 @@ class Pi0RL(EnvIO, Pi0):
         rl_cfg: Pi0RLConfig,
         config_name: str = "",
         state_indices: Sequence[int] | None = None,
+        eval_sft_image_crop: bool = False,
     ):
         super().__init__(
             config,
@@ -76,6 +77,7 @@ class Pi0RL(EnvIO, Pi0):
             action_chunk=action_chunk,
             config_name=config_name or rl_cfg.config_name,
             state_indices=state_indices,
+            eval_sft_image_crop=eval_sft_image_crop,
         )
         self.model_action_dim = self.action_dim
         self.rl_cfg = rl_cfg

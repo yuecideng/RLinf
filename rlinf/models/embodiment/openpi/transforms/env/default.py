@@ -26,6 +26,8 @@ def repack_env_obs(env_obs: dict, *, select_state: Callable) -> dict:
         "prompt": env_obs["task_descriptions"],
         "observation/state": select_state(env_obs["states"]),
     }
+    if "episode_steps" in env_obs:
+        processed_obs["observation/episode_step"] = env_obs["episode_steps"]
     wrist_images = env_obs.get("wrist_images")
     if wrist_images is not None:
         processed_obs["observation/wrist_image"] = wrist_images

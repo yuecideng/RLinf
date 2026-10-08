@@ -1,0 +1,11 @@
+defaults:
+  - embodichain_pour_water_sft_openpi_pi05_smoke
+  - _self_
+
+cluster:
+  component_placement:
+    actor,env,rollout: 3-6
+
+actor:
+  fsdp_config:
+    checkpoint_format: dcp

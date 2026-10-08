@@ -1,0 +1,12 @@
+defaults:
+  - embodichain_pick_place_sft_openpi_pi05_smoke
+  - _self_
+
+cluster:
+  component_placement:
+    actor,env,rollout: 3-6
+
+# DCP checkpoint metadata uses Gloo; training tensor collectives keep NCCL.
+actor:
+  fsdp_config:
+    checkpoint_format: dcp
