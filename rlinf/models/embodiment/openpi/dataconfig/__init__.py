@@ -37,6 +37,9 @@ from rlinf.models.embodiment.openpi.dataconfig.calvin_dataconfig import (
 from rlinf.models.embodiment.openpi.dataconfig.dual_franka_tcp_rot6d_dataconfig import (
     DualFrankaTcpRot6dDataConfig,
 )
+from rlinf.models.embodiment.openpi.dataconfig.embodichain_dataconfig import (
+    EmbodiChainJointDataConfig,
+)
 from rlinf.models.embodiment.openpi.dataconfig.franka_co_training_dataconfig import (
     LeRobotFrankaEEDataConfig,
 )
@@ -581,7 +584,59 @@ _CONFIGS = [
         ),
         pytorch_weight_path="checkpoints/torch/pi05_droid_polaris",
     ),
+    TrainConfig(
+        name="pi05_embodichain_joint",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_horizon=10,
+            discrete_state_input=False,
+        ),
+        data=EmbodiChainJointDataConfig(
+            repo_id="RLinf/embodichain_joint",
+            base_config=DataConfig(prompt_from_task=False),
+            assets=AssetsConfig(
+                assets_dir="checkpoints/torch/pi05_embodichain_joint/assets"
+            ),
+            extra_delta_transform=False,
+            output_action_dim=14,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "checkpoints/jax/pi05_base"
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+        seed=0,
+        batch_size=32,
+        optimizer=_optimizer.AdamW(clip_gradient_norm=1.0),
+        ema_decay=0.999,
+        num_workers=4,
+        num_train_steps=30_000,
+        log_interval=100,
+        save_interval=1_000,
+    ),
 ]
+
+# Joint-space policies need qpos tokens when visual contact cues are occluded.
+# Keep the image-only config available for existing checkpoint evaluations.
+_CONFIGS.append(
+    dataclasses.replace(
+        _CONFIGS[-1],
+        name="pi05_embodichain_joint_state",
+        model=dataclasses.replace(_CONFIGS[-1].model, discrete_state_input=True),
+    )
+)
+
+# Preserve physical state dimensions through normalization and PI0.5's
+# discrete-state tokenization. ModelTransformFactory pads tensors afterwards.
+_CONFIGS.append(
+    dataclasses.replace(
+        _CONFIGS[-1],
+        name="pi05_embodichain_joint_state_v2",
+        data=dataclasses.replace(
+            _CONFIGS[-1].data,
+            pad_inputs_to_model_dim=False,
+        ),
+    )
+)
 
 if len({config.name for config in _CONFIGS}) != len(_CONFIGS):
     raise ValueError("Config names must be unique.")

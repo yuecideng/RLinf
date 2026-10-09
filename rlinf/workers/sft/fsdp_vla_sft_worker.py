@@ -19,9 +19,32 @@ from omegaconf import DictConfig
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from rlinf.config import SupportedModel
+from rlinf.hybrid_engines.fsdp.strategy.checkpoint import checkpoint_communication_group
 from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.utils.utils import get_rng_state, set_rng_state
 from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
+
+
+def _use_action_chunk_loss(cfg: DictConfig) -> bool:
+    """Return whether an OpenPI recipe opts into chunk-only SFT loss."""
+    if SupportedModel(cfg.actor.model.model_type) != SupportedModel.OPENPI:
+        return False
+    return bool(cfg.actor.model.openpi.get("use_action_chunk_loss", False))
+
+
+def _sft_action_loss_weights(
+    cfg: DictConfig,
+) -> tuple[list[float] | None, list[float] | None]:
+    """Read optional physical-dimension and early-step SFT loss weights."""
+    if SupportedModel(cfg.actor.model.model_type) != SupportedModel.OPENPI:
+        return None, None
+    openpi_cfg = cfg.actor.model.openpi
+    dim = openpi_cfg.get("action_loss_weights")
+    step = openpi_cfg.get("action_step_weights")
+    return (
+        None if dim is None else [float(value) for value in dim],
+        None if step is None else [float(value) for value in step],
+    )
 
 
 class FSDPVlaSftWorker(FSDPSftWorker):
@@ -85,7 +108,17 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
     def get_train_model_output(self, batch: Any) -> tuple[torch.Tensor, dict[str, Any]]:
         with self.amp_context:
-            output = self.model(forward_type=ForwardType.SFT, data=batch)
+            model_kwargs = {}
+            if _use_action_chunk_loss(self.cfg):
+                model_kwargs["use_action_chunk_loss"] = True
+            dim_weights, step_weights = _sft_action_loss_weights(self.cfg)
+            if dim_weights is not None:
+                model_kwargs["action_loss_weights"] = dim_weights
+            if step_weights is not None:
+                model_kwargs["action_step_weights"] = step_weights
+            output = self.model(
+                forward_type=ForwardType.SFT, data=batch, **model_kwargs
+            )
 
         if isinstance(output, torch.Tensor):
             loss = output
@@ -104,27 +137,41 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                     step_metrics[key] = value
         return loss, step_metrics
 
-    def save_checkpoint(self, save_path: str, step: int = 0) -> None:
-        super().save_checkpoint(save_path, step)
+    def save_checkpoint(
+        self, save_path: str, step: int = 0, *, force_training_state: bool = False
+    ) -> None:
+        super().save_checkpoint(
+            save_path, step, force_training_state=force_training_state
+        )
+        if not self._should_save_training_state(step, force_training_state):
+            return
 
         if isinstance(self.data_loader, StatefulDataLoader):
-            state = self.data_loader.state_dict()
+            with checkpoint_communication_group(
+                self._cfg.fsdp_config.get("checkpoint_communication_backend"),
+                self._cfg.fsdp_config.get("checkpoint_format", "dcp"),
+            ) as checkpoint_group:
+                state = self.data_loader.state_dict()
 
-            all_states = [None] * self._world_size
-            torch.distributed.all_gather_object(all_states, state)
+                all_states = [None] * self._world_size
+                torch.distributed.all_gather_object(
+                    all_states, state, group=checkpoint_group
+                )
 
-            if self._rank == 0:
-                torch.save(all_states, os.path.join(save_path, "data.pt"))
+                if self._rank == 0:
+                    torch.save(all_states, os.path.join(save_path, "data.pt"))
 
-            torch.distributed.barrier()
+                torch.distributed.barrier()
 
-            rng_state = get_rng_state()
-            all_rng_states = [None] * self._world_size
-            torch.distributed.all_gather_object(all_rng_states, rng_state)
-            if self._rank == 0:
-                torch.save(all_rng_states, os.path.join(save_path, "rng.pt"))
+                rng_state = get_rng_state()
+                all_rng_states = [None] * self._world_size
+                torch.distributed.all_gather_object(
+                    all_rng_states, rng_state, group=checkpoint_group
+                )
+                if self._rank == 0:
+                    torch.save(all_rng_states, os.path.join(save_path, "rng.pt"))
 
-            torch.distributed.barrier()
+                torch.distributed.barrier()
 
     def load_checkpoint(self, load_path: str) -> None:
         super().load_checkpoint(load_path)
