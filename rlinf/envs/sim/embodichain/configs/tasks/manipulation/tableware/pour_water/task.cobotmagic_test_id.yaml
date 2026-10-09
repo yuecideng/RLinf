@@ -1,6 +1,6 @@
 id: PourWater-v1
 environment:
-  component: embodichain_tasks/configs/tasks/manipulation/tableware/pour_water/env_test_id.yaml
+  component: env_test_id.yaml
 task_program:
   program: embodichain_tasks/configs/tasks/manipulation/tableware/pour_water/task_program/program.yaml
   integration: embodichain_tasks/configs/tasks/manipulation/tableware/pour_water/task_program/integration.yaml

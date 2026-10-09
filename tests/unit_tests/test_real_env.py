@@ -33,6 +33,7 @@ import time
 import types
 import warnings
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional
@@ -4443,6 +4444,15 @@ _PICK_DEPLOYMENTS = (
     "train",
     "val_id",
 )
+_POUR_DEPLOYMENTS = (
+    "ood",
+    "smoke",
+    "smoke_train",
+    "smoke_val",
+    "test_id",
+    "train",
+    "val_id",
+)
 _PICK_CONFIG_PREFIX = "rlinf/envs/sim/embodichain/configs"
 _PICK_TASK_PACKAGE = "rlinf.envs.sim.embodichain.tasks"
 _PICK_TASK_MODULE = f"{_PICK_TASK_PACKAGE}.pick_place"
@@ -4609,9 +4619,8 @@ def test_embodichain_constructor_resolves_package_config_away_from_cwd(
         )
         assert payload["id"] == _PICK_ENV_ID
         assert payload["embodiment"]["overrides"]["init_rot"] == [0.0, 0.0, 154.0]
-        assert payload["environment"]["component"].startswith(
-            "embodichain_tasks/configs/"
-        )
+        assert payload["environment"]["component"] == f"env_{deployment}.yaml"
+        assert (selected.parent / payload["environment"]["component"]).is_file()
         assert env.action_space.shape == (9,)
     finally:
         env.close()
@@ -4734,6 +4743,60 @@ def test_embodichain_pick_deployment_composes_through_public_sdk(
     assert cfg.sensor[0].to_dict() == expected_camera.to_dict()
     if deployment.endswith("runtime"):
         assert cfg.extensions["deterministic_grasp_variant"] == "original"
+
+
+@pytest.mark.parametrize("layout", ("source", "installed_package"))
+@pytest.mark.parametrize(
+    ("family", "deployment"),
+    [("pick_place", f"task.franka_{name}.yaml") for name in _PICK_DEPLOYMENTS]
+    + [
+        ("tableware/pour_water", f"task.cobotmagic_{name}.yaml")
+        for name in _POUR_DEPLOYMENTS
+    ],
+)
+def test_embodichain_deployments_compose_rlinf_owned_profiles(
+    monkeypatch, tmp_path, embodichain_full_sdk, layout, family, deployment
+):
+    """Both task families load local profiles despite same-named CWD files."""
+    from embodichain.lab.gym.utils.gym_utils import config_to_cfg, get_manager_modules
+    from embodichain.lab.sim.cfg import physics_backend_from_cfg
+    from embodichain.utils.utility import load_config
+
+    root = _ROOT / _PICK_CONFIG_PREFIX
+    if layout == "installed_package":
+        installed = tmp_path / "site" / _PICK_CONFIG_PREFIX
+        shutil.copytree(root, installed)
+        root = installed
+    path = root / "tasks/manipulation" / family / deployment
+    payload = load_config(path)
+    original = deepcopy(payload)
+    reference = Path(payload["environment"]["component"])
+    assert reference.parent == Path(".")
+    expected = load_config(path.parent / reference)
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    (cwd / reference).write_text("shadow: true\n")
+    monkeypatch.chdir(cwd)
+
+    cfg = config_to_cfg(
+        payload, manager_modules=get_manager_modules(), source_path=path
+    )
+
+    assert payload == original
+    assert cfg.seed == payload.get("seed")
+    assert cfg.max_episode_steps == expected["max_episode_steps"]
+    assert physics_backend_from_cfg(cfg.sim_cfg.physics_cfg) == expected["physics"]
+    assert {obj.uid for obj in cfg.rigid_object} == {
+        obj["uid"] for obj in expected["simulation"]["rigid_object"]
+    }
+    assert (
+        cfg.dataset.lerobot.params["save_path"]
+        == expected["env"]["dataset"]["lerobot"]["params"]["save_path"]
+    )
+    if family == "pick_place":
+        assert cfg.extensions == expected["env"]["extensions"]
+    else:
+        assert cfg.task_program.program_id == "pour_water_with_right_arm"
 
 
 def test_embodichain_pick_entry_point_discovery_preserves_legacy_id(

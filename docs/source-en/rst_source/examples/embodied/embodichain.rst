@@ -403,24 +403,40 @@ model process close on completion or failure, and the caller's precision is
 restored. The child owns its inference RNG; reset seeds control the environment.
 
 RLinf owns the single-cycle ``RLinf-PickPlace-v1`` task, the Franka deployment
-that faces the workspace, and the two VLA camera components under
-``rlinf/envs/sim/embodichain/``. Installing RLinf registers the task through
-EmbodiChain's ``embodichain.tasks`` entry point; the RLinf adapter also imports
-it directly for source-checkout runs. Spatial and split environment components
-remain in EmbodiChain. The deployments select those packaged components using
-``embodichain_tasks/configs/...`` paths, so they require the corresponding
-`EmbodiChain spatial-validation update <https://github.com/DexForce/EmbodiChain/pull/737>`_. The task and camera YAML files are
-included in the RLinf wheel. Use the ``rlinf/...`` config paths with the RLinf
-adapter from any working directory, or absolute paths with the EmbodiChain CLI.
+that faces the workspace, the VLA camera components, and all 16 spatial/split
+environment profiles under ``rlinf/envs/sim/embodichain/``. Installing RLinf
+registers the task through EmbodiChain's ``embodichain.tasks`` entry point; the
+adapter also imports it directly for source-checkout runs. Each deployment
+selects an adjacent ``env_*.yaml`` profile. These profiles own the experiment's
+sampling ranges, episode counts, output directories, and task extensions; the
+``*_runtime.yaml`` variants contain example ``/workspace/datasets/...`` paths
+that must match the collection machine. The task, profile, and camera YAML
+files are included in the RLinf wheel. Use ``rlinf/...`` config paths with the
+RLinf adapter from any working directory, or absolute paths with the
+EmbodiChain CLI.
 
-The dependency installer may leave the RLinf project uninstalled. Before using
-the EmbodiChain CLI for these tasks, install the matching SDK update and RLinf
-in that CLI's Python environment so it can resolve the components and discover
-the task entry point:
+The SDK provides the general capabilities these experiments use:
+`pickup grasp variants <https://github.com/DexForce/EmbodiChain/pull/738>`_,
+`demo seed metadata <https://github.com/DexForce/EmbodiChain/pull/740>`_,
+`termination configuration <https://github.com/DexForce/EmbodiChain/pull/741>`_,
+and `packaged component resolution <https://github.com/DexForce/EmbodiChain/pull/742>`_.
+Pour-water continues to select the SDK's official Task Program and execution
+policy through ``embodichain_tasks/configs/...`` references.
+
+Install an SDK revision containing these four changes and RLinf in the same
+Python environment as the collection CLI. While the SDK changes are separate
+PRs, the following creates a temporary integration branch from the validated
+base and installs both projects. Use a fresh SDK checkout for these commands:
 
 .. code:: bash
 
-   python -m pip install --no-deps git+https://github.com/DexForce/EmbodiChain.git@96ff59b848fe995db3acf2086e91f1db3dc23a7a
+   git clone https://github.com/DexForce/EmbodiChain.git /path/to/EmbodiChain
+   git -C /path/to/EmbodiChain switch -c rlinf-pi05-sdk 7a9c2675d49c6aee7a33082a5585a9932f5b945b
+   for pr in 738 740 741 742; do
+       git -C /path/to/EmbodiChain fetch origin "pull/${pr}/head"
+       git -C /path/to/EmbodiChain cherry-pick FETCH_HEAD
+   done
+   python -m pip install --no-deps -e /path/to/EmbodiChain
    python -m pip install --no-deps -e /path/to/RLinf
 
 Use the current SDK's official CobotMagic V4 assets for pouring. Download them

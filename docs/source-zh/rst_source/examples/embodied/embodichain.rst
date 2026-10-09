@@ -253,13 +253,21 @@ Pour 诊断中的 ``max_bottle_tilt`` 是瓶子初始与当前 local Z 轴的夹
 
 在线 correction 数据由 ``toolkits/lerobot/collect_embodichain_dagger.py`` 收集。collector 在独立的 spawn process 中运行 OpenPI inference，模型使用 ``high`` matmul precision，simulation 与 expert correction planner 始终使用 ``highest``。每帧保留 action 执行前的 RGB 和 qpos，以及实际应用的 joint target，包括 correction 结果。正常结束或异常退出时都会关闭 recorder、environment 和 model process，并恢复调用方的 precision。model process 独立维护 inference RNG，reset seed 控制 environment 的随机状态。
 
-单次 ``RLinf-PickPlace-v1`` 任务、面对操作空间的 Franka deployment，以及两套 VLA 相机组件由 RLinf 持有，位于 ``rlinf/envs/sim/embodichain/``。安装 RLinf 后，EmbodiChain 通过 ``embodichain.tasks`` entry point 发现该任务；从 source checkout 启动时，RLinf adapter 也会直接导入任务模块。空间随机化和 split 的 environment 组件仍由 EmbodiChain 持有，deployment 使用 ``embodichain_tasks/configs/...`` 选择包内资源，因此需要配套的 `EmbodiChain 空间验证更新 <https://github.com/DexForce/EmbodiChain/pull/737>`_。任务和相机 YAML 会打包进 RLinf wheel。在任意工作目录使用 RLinf adapter 时，可传入 ``rlinf/...`` 配置路径；使用 EmbodiChain CLI 时传入绝对路径。
+单次 ``RLinf-PickPlace-v1`` 任务、面对操作空间的 Franka deployment、VLA 相机组件，以及全部 16 份空间随机化和 split 的 environment profile 均由 RLinf 持有，位于 ``rlinf/envs/sim/embodichain/``。安装 RLinf 后，EmbodiChain 通过 ``embodichain.tasks`` entry point 发现任务；从 source checkout 启动时，adapter 也会直接导入任务模块。各 deployment 引用同目录下的 ``env_*.yaml``，由这些 profile 配置实验的采样范围、采集次数、输出目录和任务扩展字段。``*_runtime.yaml`` 中的 ``/workspace/datasets/...`` 是运行路径示例，使用时应与采集机器的目录一致。任务、profile 和相机 YAML 均会打包进 RLinf wheel。在任意工作目录使用 RLinf adapter 时，可传入 ``rlinf/...`` 配置路径；使用 EmbodiChain CLI 时传入绝对路径。
 
-依赖安装脚本可能没有安装 RLinf 项目本身。使用 EmbodiChain CLI 生成这些任务的数据前，应在该 CLI 的 Python 环境中安装配套 SDK 更新和 RLinf，使其能够解析组件并发现 task entry point：
+实验使用的通用能力由 SDK 提供，分别是 `抓取姿态分支选择 <https://github.com/DexForce/EmbodiChain/pull/738>`_、`demo seed 元信息 <https://github.com/DexForce/EmbodiChain/pull/740>`_、`终止参数透传 <https://github.com/DexForce/EmbodiChain/pull/741>`_ 和 `官方组件路径解析 <https://github.com/DexForce/EmbodiChain/pull/742>`_。Pour-water 继续通过 ``embodichain_tasks/configs/...`` 引用 SDK 的官方 Task Program 和执行策略。
+
+在数据采集 CLI 使用的同一 Python 环境中，安装包含这四项改动的 SDK 和 RLinf。SDK 改动仍分别位于独立 PR 时，可用下面的命令从已验证的 base 创建临时集成分支，再安装两个项目。请使用新的 SDK checkout 执行这些命令：
 
 .. code:: bash
 
-   python -m pip install --no-deps git+https://github.com/DexForce/EmbodiChain.git@96ff59b848fe995db3acf2086e91f1db3dc23a7a
+   git clone https://github.com/DexForce/EmbodiChain.git /path/to/EmbodiChain
+   git -C /path/to/EmbodiChain switch -c rlinf-pi05-sdk 7a9c2675d49c6aee7a33082a5585a9932f5b945b
+   for pr in 738 740 741 742; do
+       git -C /path/to/EmbodiChain fetch origin "pull/${pr}/head"
+       git -C /path/to/EmbodiChain cherry-pick FETCH_HEAD
+   done
+   python -m pip install --no-deps -e /path/to/EmbodiChain
    python -m pip install --no-deps -e /path/to/RLinf
 
 Pour-water 使用当前 SDK 的官方 CobotMagic V4 资产，在同一环境中运行 ``python -m embodichain.data download --name CobotMagicArm`` 下载。复现历史 V3 实验时，将 V3 资产放在独立 data root 中。归档的 V3 policy 结果不能代表 V4 成功率；实验迁到 V4 后，应重新生成 smoke 数据和 train-only statistics。

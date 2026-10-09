@@ -1,7 +1,7 @@
 id: PourWater-v1
 
 environment:
-  component: embodichain_tasks/configs/tasks/manipulation/tableware/pour_water/env_smoke.yaml
+  component: env_smoke.yaml
 
 task_program:
   program: embodichain_tasks/configs/tasks/manipulation/tableware/pour_water/task_program/program.yaml

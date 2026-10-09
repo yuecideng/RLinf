@@ -1,7 +1,7 @@
 id: RLinf-PickPlace-v1
 
 environment:
-  component: embodichain_tasks/configs/tasks/manipulation/pick_place/env_smoke_train_runtime.yaml
+  component: env_smoke_train_runtime.yaml
 
 embodiment:
   component: ../../../components/embodiments/franka_panda_vla.yaml
