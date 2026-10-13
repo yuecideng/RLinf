@@ -33,7 +33,6 @@ import time
 import types
 import warnings
 from concurrent.futures import ThreadPoolExecutor
-from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional
@@ -4473,31 +4472,10 @@ def test_robotwin_eval_success_seed_order_is_controlled_by_base_seed():
     assert selected_seed_0 != selected_seed_1
 
 
-# EmbodiChain task deployment and public task contracts.
+# EmbodiChain configuration resolution and public task contracts.
 
-_PICK_DEPLOYMENTS = (
-    "ood",
-    "smoke_train",
-    "smoke_train_runtime",
-    "smoke_val",
-    "smoke_val_runtime",
-    "test_id",
-    "train",
-    "val_id",
-)
-_POUR_DEPLOYMENTS = (
-    "ood",
-    "smoke",
-    "smoke_train",
-    "smoke_val",
-    "test_id",
-    "train",
-    "val_id",
-)
-_PICK_CONFIG_PREFIX = "rlinf/envs/sim/embodichain/configs"
-_PICK_TASK_PACKAGE = "rlinf.envs.sim.embodichain.tasks"
-_PICK_TASK_MODULE = f"{_PICK_TASK_PACKAGE}.pick_place"
-_PICK_ENV_ID = "RLinf-PickPlace-v1"
+_BOUNDARY_ENV_ID = "SDKBoundaryEnv"
+_EMBODICHAIN_CONFIG_PREFIX = "rlinf/envs/sim/embodichain/configs"
 
 
 @pytest.fixture
@@ -4505,15 +4483,6 @@ def embodichain_sdk_boundary(monkeypatch, tmp_path):
     """Replace the external SDK while exercising the real adapter constructor."""
     vendor = tmp_path / "vendor" / "embodichain"
     vendor.mkdir(parents=True)
-    parent = importlib.import_module("rlinf.envs.sim.embodichain")
-    previous_tasks = getattr(parent, "tasks", None)
-    previous_modules = {
-        name: module
-        for name, module in sys.modules.items()
-        if name == _PICK_TASK_PACKAGE or name.startswith(f"{_PICK_TASK_PACKAGE}.")
-    }
-    for name in previous_modules:
-        monkeypatch.delitem(sys.modules, name)
     modules = {}
     for name in (
         "embodichain",
@@ -4582,23 +4551,13 @@ def embodichain_sdk_boundary(monkeypatch, tmp_path):
         return native
 
     registry.build_env = build_env
-    try:
-        yield SimpleNamespace(
-            captures=captures,
-            vendor=vendor,
-            parsed_configs=parsed_configs,
-            original_sim_configs=original_sim_configs,
-            built_configs=built_configs,
-        )
-    finally:
-        for name in tuple(sys.modules):
-            if name == _PICK_TASK_PACKAGE or name.startswith(f"{_PICK_TASK_PACKAGE}."):
-                sys.modules.pop(name, None)
-        sys.modules.update(previous_modules)
-        if previous_tasks is None:
-            parent.__dict__.pop("tasks", None)
-        else:
-            parent.tasks = previous_tasks
+    return SimpleNamespace(
+        captures=captures,
+        vendor=vendor,
+        parsed_configs=parsed_configs,
+        original_sim_configs=original_sim_configs,
+        built_configs=built_configs,
+    )
 
 
 def _construct_embodichain_env(config_path):
@@ -4610,7 +4569,7 @@ def _construct_embodichain_env(config_path):
             sim_device="cpu",
             seed=4101,
             auto_reset=False,
-            task_prompt="Pick up the cube and place it on the marked target.",
+            task_prompt="Boundary environment",
         ),
         num_envs=1,
         seed_offset=0,
@@ -4620,11 +4579,13 @@ def _construct_embodichain_env(config_path):
 
 
 @pytest.mark.parametrize("layout", ["source", "installed_package"])
-@pytest.mark.parametrize("deployment", _PICK_DEPLOYMENTS)
-def test_embodichain_constructor_resolves_package_config_away_from_cwd(
-    monkeypatch, tmp_path, embodichain_sdk_boundary, layout, deployment
+@pytest.mark.parametrize(
+    "deployment", ["task.panda.yaml", "task.panda.formal_expert.yaml"]
+)
+def test_embodichain_package_config_resolves_away_from_cwd(
+    monkeypatch, tmp_path, layout, deployment
 ):
-    """Package-relative deployments win over CWD and vendor-root decoys."""
+    """Packaged Stack Cube paths win over CWD and vendor-root decoys."""
     from rlinf.envs.sim.embodichain import embodichain_env as adapter
 
     source = Path(adapter.__file__).resolve()
@@ -4637,34 +4598,21 @@ def test_embodichain_constructor_resolves_package_config_away_from_cwd(
         expected_root = installed / "configs"
     else:
         expected_root = source.parent / "configs"
-    relative = (
-        f"{_PICK_CONFIG_PREFIX}/tasks/manipulation/pick_place/"
-        f"task.franka_{deployment}.yaml"
-    )
+    suffix = f"tasks/manipulation/stack_cube/{deployment}"
+    relative = f"rlinf/envs/sim/embodichain/configs/{suffix}"
     decoy_root = tmp_path / "decoy"
     decoy = decoy_root / relative
     decoy.parent.mkdir(parents=True)
     decoy.write_text("id: IncorrectVendorOverride\n")
     monkeypatch.setenv("EMBODICHAIN_PATH", str(decoy_root))
-    monkeypatch.chdir(tmp_path)
-    env = _construct_embodichain_env(relative)
-    try:
-        payload, selected = embodichain_sdk_boundary.captures[-1]
-        assert (
-            selected
-            == (
-                expected_root
-                / "tasks/manipulation/pick_place"
-                / f"task.franka_{deployment}.yaml"
-            ).resolve()
-        )
-        assert payload["id"] == _PICK_ENV_ID
-        assert payload["embodiment"]["overrides"]["init_rot"] == [0.0, 0.0, 154.0]
-        assert payload["environment"]["component"] == f"env_{deployment}.yaml"
-        assert (selected.parent / payload["environment"]["component"]).is_file()
-        assert env.action_space.shape == (9,)
-    finally:
-        env.close()
+    monkeypatch.chdir(decoy_root)
+
+    selected = adapter._resolve_gym_config_path(relative)
+    assert selected == (expected_root / suffix).resolve()
+    payload = OmegaConf.load(selected)
+    assert payload.id == "RLinf-StackCube-Expert-v1"
+    assert (selected.parent / payload.environment.component).is_file()
+    assert (selected.parent / payload.embodiment.component).is_file()
 
 
 def test_embodichain_constructor_rejects_package_path_traversal(
@@ -4672,7 +4620,7 @@ def test_embodichain_constructor_rejects_package_path_traversal(
 ):
     """An existing outside file cannot escape an RLinf package selector."""
     outside = tmp_path / "outside.yaml"
-    outside.write_text(f"id: {_PICK_ENV_ID}\n")
+    outside.write_text(f"id: {_BOUNDARY_ENV_ID}\n")
     monkeypatch.chdir(tmp_path)
     with pytest.raises(ValueError, match="stay within the package"):
         _construct_embodichain_env("rlinf/../../outside.yaml")
@@ -4703,12 +4651,12 @@ def test_embodichain_constructor_preserves_authored_simulation_config(
 ):
     """Runtime placement leaves parsed physics, renderer and timing intact."""
     path = tmp_path / "authored.yaml"
-    path.write_text(f"id: {_PICK_ENV_ID}\nseed: 4101\n")
+    path.write_text(f"id: {_BOUNDARY_ENV_ID}\nseed: 4101\n")
     env = _construct_embodichain_env(path)
     try:
         parsed = embodichain_sdk_boundary.parsed_configs[-1]
         env_id, built = embodichain_sdk_boundary.built_configs[-1]
-        assert env_id == _PICK_ENV_ID
+        assert env_id == _BOUNDARY_ENV_ID
         assert built is parsed
         sim_cfg = built.sim_cfg
         assert sim_cfg is embodichain_sdk_boundary.original_sim_configs[-1]
@@ -4725,449 +4673,12 @@ def test_embodichain_constructor_preserves_authored_simulation_config(
         env.close()
 
 
-@pytest.fixture
-def embodichain_pick_module():
-    """Load the migrated task only when the optional SDK can be imported."""
-    pytest.importorskip("embodichain.lab.gym.envs", exc_type=ImportError)
-    return importlib.import_module(_PICK_TASK_MODULE)
-
-
-@pytest.fixture
-def embodichain_full_sdk(embodichain_pick_module):
-    """Require the public planner/config API instead of accepting partial installs."""
-    try:
-        from embodichain.lab.sim.motion.motion_generator import MotionGenerator
-        from embodichain.lab.sim.motion.planners import ToppraPlannerCfg
-        from embodichain.utils.config_paths import resolve_config_path
-    except ImportError as error:
-        pytest.skip(f"Full EmbodiChain CPU SDK is unavailable: {error}")
-    assert MotionGenerator is not None and ToppraPlannerCfg is not None
-    assert callable(resolve_config_path)
-    return embodichain_pick_module
-
-
-@pytest.mark.parametrize("deployment", _PICK_DEPLOYMENTS)
-def test_embodichain_pick_deployment_composes_through_public_sdk(
-    monkeypatch, tmp_path, embodichain_full_sdk, deployment
-):
-    """Production composition preserves facing, neutral joints and VLA camera."""
-    from embodichain.lab.gym.utils.gym_utils import config_to_cfg, get_manager_modules
-    from embodichain.lab.sim.robots import FrankaPandaCfg
-    from embodichain.lab.sim.sensors import CameraCfg
-    from embodichain.utils.utility import load_config
-
-    path = (
-        _ROOT
-        / _PICK_CONFIG_PREFIX
-        / "tasks/manipulation/pick_place"
-        / f"task.franka_{deployment}.yaml"
-    )
-    monkeypatch.chdir(tmp_path)
-    payload = load_config(path)
-    cfg = config_to_cfg(
-        payload, manager_modules=get_manager_modules(), source_path=path
-    )
-    baseline = FrankaPandaCfg.from_dict({"robot_type": "panda"})
-    assert payload["id"] == _PICK_ENV_ID
-    assert cfg.robot.init_rot == [0.0, 0.0, 154.0]
-    assert cfg.robot.init_pos == baseline.init_pos
-    assert cfg.robot.init_qpos == baseline.init_qpos
-    assert cfg.robot.qpos_limits == baseline.qpos_limits
-    assert cfg.robot.joint_drive_props.to_dict() == baseline.joint_drive_props.to_dict()
-    assert len(cfg.sensor) == 1
-    assert cfg.sensor[0].uid == "cam_high"
-    assert (cfg.sensor[0].width, cfg.sensor[0].height) == (640, 480)
-    component = load_config(
-        _ROOT / _PICK_CONFIG_PREFIX / "components/embodiments/franka_panda_vla.yaml"
-    )
-    expected_camera = CameraCfg.from_dict(component["sensor"][0])
-    assert cfg.sensor[0].to_dict() == expected_camera.to_dict()
-    if deployment.endswith("runtime"):
-        assert cfg.extensions["deterministic_grasp_variant"] == "original"
-
-
-@pytest.mark.parametrize("layout", ("source", "installed_package"))
-@pytest.mark.parametrize(
-    ("family", "deployment"),
-    [("pick_place", f"task.franka_{name}.yaml") for name in _PICK_DEPLOYMENTS]
-    + [
-        ("tableware/pour_water", f"task.cobotmagic_{name}.yaml")
-        for name in _POUR_DEPLOYMENTS
-    ],
-)
-def test_embodichain_deployments_compose_rlinf_owned_profiles(
-    monkeypatch, tmp_path, embodichain_full_sdk, layout, family, deployment
-):
-    """Both task families load local profiles despite same-named CWD files."""
-    from embodichain.lab.gym.utils.gym_utils import config_to_cfg, get_manager_modules
-    from embodichain.lab.sim.cfg import physics_backend_from_cfg
-    from embodichain.utils.utility import load_config
-
-    root = _ROOT / _PICK_CONFIG_PREFIX
-    if layout == "installed_package":
-        installed = tmp_path / "site" / _PICK_CONFIG_PREFIX
-        shutil.copytree(root, installed)
-        root = installed
-    path = root / "tasks/manipulation" / family / deployment
-    payload = load_config(path)
-    original = deepcopy(payload)
-    reference = Path(payload["environment"]["component"])
-    assert reference.parent == Path(".")
-    expected = load_config(path.parent / reference)
-    cwd = tmp_path / "cwd"
-    cwd.mkdir()
-    (cwd / reference).write_text("shadow: true\n")
-    monkeypatch.chdir(cwd)
-
-    cfg = config_to_cfg(
-        payload, manager_modules=get_manager_modules(), source_path=path
-    )
-
-    assert payload == original
-    assert cfg.seed == payload.get("seed")
-    assert cfg.max_episode_steps == expected["max_episode_steps"]
-    assert physics_backend_from_cfg(cfg.sim_cfg.physics_cfg) == expected["physics"]
-    assert {obj.uid for obj in cfg.rigid_object} == {
-        obj["uid"] for obj in expected["simulation"]["rigid_object"]
-    }
-    assert (
-        cfg.dataset.lerobot.params["save_path"]
-        == expected["env"]["dataset"]["lerobot"]["params"]["save_path"]
-    )
-    if family == "pick_place":
-        assert cfg.extensions == expected["env"]["extensions"]
-    else:
-        assert cfg.task_program.program_id == "pour_water_with_right_arm"
-
-
-def test_embodichain_pick_entry_point_discovery_preserves_legacy_id(
-    tmp_path, embodichain_pick_module
-):
-    """Fresh-process discovery registers RLinf beside the official task ID."""
-    tomllib = pytest.importorskip("tomllib")
-    declared = tomllib.loads((_ROOT / "pyproject.toml").read_text())["project"][
-        "entry-points"
-    ]["embodichain.tasks"]["rlinf"]
-    code = textwrap.dedent(
-        """
-        import importlib.metadata
-        import sys
-        from embodichain.lab.gym.envs import EmbodiedEnv
-        from embodichain.lab.gym.utils.registration import (
-            REGISTERED_ENVS, discover_task_packages, get_env_spec, register_env,
-        )
-        assert 'rlinf.envs.sim.embodichain.tasks.pick_place' not in sys.modules
-        class OfficialLegacyTask(EmbodiedEnv):
-            pass
-        if 'PickPlace-v1' not in REGISTERED_ENVS:
-            register_env('PickPlace-v1')(OfficialLegacyTask)
-        legacy = get_env_spec('PickPlace-v1')
-        entry = importlib.metadata.EntryPoint(
-            name='rlinf', value=sys.argv[1], group='embodichain.tasks',
-        )
-        importlib.metadata.entry_points = lambda **kwargs: (entry,)
-        assert 'rlinf' in discover_task_packages()
-        from rlinf.envs.sim.embodichain.tasks.pick_place import PickPlaceEnv
-        assert REGISTERED_ENVS['RLinf-PickPlace-v1'].cls is PickPlaceEnv
-        assert get_env_spec('RLinf-PickPlace-v1').cls is PickPlaceEnv
-        assert get_env_spec('PickPlace-v1') is legacy
-        """
-    )
-    child = subprocess.run(
-        [sys.executable, "-c", code, declared],
-        cwd=tmp_path,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    assert child.returncode == 0, child.stdout + child.stderr
-
-
-@pytest.fixture
-def embodichain_pick_task(monkeypatch, embodichain_full_sdk):
-    """Use SDK lifecycle/planner fakes with real task-owned initialization."""
-    from embodichain.lab.gym.envs import EmbodiedEnv, EmbodiedEnvCfg
-    from embodichain.lab.sim import atomic_actions
-    from embodichain.lab.sim.motion import motion_generator
-    from embodichain.toolkits.graspkit import pg_grasp
-
-    bodies = {}
-    for uid, height in (("cube", 0.035), ("goal_marker", 0.005)):
-        pose = torch.eye(4).repeat(2, 1, 1)
-        pose[:, 2, 3] = height
-        body = SimpleNamespace(
-            pose=pose,
-            body_data=SimpleNamespace(
-                lin_vel=torch.zeros(2, 3), ang_vel=torch.zeros(2, 3)
-            ),
-        )
-        body.get_local_pose = lambda *, to_matrix, body=body: body.pose.clone()
-
-        def set_pose(value, *, env_ids=None, body=body):
-            body.pose[env_ids if env_ids is not None else slice(None)] = value
-
-        body.set_local_pose = set_pose
-        body.clear_dynamics = lambda ids=None: None
-        body.get_vertices = lambda *, scale: torch.zeros(2, 3, 3)
-        body.get_triangles = lambda: torch.tensor([[[0, 1, 2]], [[0, 1, 2]]])
-        bodies[uid] = body
-    qpos = torch.tensor(
-        [0.0, -0.569, 0.0, -2.810, 0.0, 3.037, 0.741, 0.04, 0.04]
-    ).repeat(2, 1)
-    robot = SimpleNamespace(
-        uid="FrankaPanda",
-        dof=9,
-        get_joint_ids=lambda *, name: [7, 8],
-        get_qpos=lambda: qpos.clone(),
-    )
-    simulator = SimpleNamespace(
-        device=torch.device("cpu"),
-        physics_dt=0.01,
-        get_rigid_object=lambda uid: bodies.get(uid),
-    )
-
-    def initialize(self, cfg, **kwargs):
-        self.cfg = cfg
-        self.sim_cfg = SimpleNamespace(physics_dt=0.01)
-        self.sim = simulator
-        self.robot = robot
-        self._num_envs = 2
-        self._elapsed_steps = torch.zeros(2, dtype=torch.int32)
-        for key, value in cfg.extensions.items():
-            setattr(self, key, value)
-
-    def reset(self, *, seed=None, options=None):
-        ids = torch.as_tensor((options or {}).get("reset_ids", [0, 1]))
-        self._elapsed_steps[ids] = 0
-        self._initialize_episode(ids)
-        return {}, self.compute_task_state()[2]
-
-    def step(self, action):
-        qpos.copy_(action)
-        self._elapsed_steps += 1
-        self._update_sim_state()
-        success, fail, metrics = self.compute_task_state()
-        return {}, torch.zeros(2), success, fail, metrics
-
-    monkeypatch.setattr(EmbodiedEnv, "__init__", initialize)
-    monkeypatch.setattr(EmbodiedEnv, "reset", reset)
-    monkeypatch.setattr(EmbodiedEnv, "step", step)
-    monkeypatch.setattr(
-        EmbodiedEnv, "_initialize_episode", lambda *args, **kwargs: None
-    )
-    monkeypatch.setattr(EmbodiedEnv, "_update_sim_state", lambda *args, **kwargs: None)
-    invocations = []
-    trajectories = []
-
-    def compile_actions(requests, context):
-        invocations.extend(requests)
-        trajectory = qpos[:, None].repeat(1, 90, 1)
-        trajectory[:, :, 0] = torch.arange(90) * 0.001 + torch.rand(()) * 0.01
-        trajectory[:, :, -2:] = 0.04 if requests[0].skill_id == "place" else 0.0
-        trajectories.append(trajectory)
-        pose = torch.eye(4).repeat(2, 1, 1)
-        return SimpleNamespace(
-            plan_success=torch.ones(2, dtype=torch.bool),
-            trajectory=SimpleNamespace(positions=trajectory),
-            projected_context=SimpleNamespace(
-                get_held_object=lambda _: SimpleNamespace(object_to_eef=pose)
-            ),
-        )
-
-    engine = SimpleNamespace(
-        bind_control_parts=lambda *args: atomic_actions.ActionBinding("cpu-test"),
-        initial_context=lambda **kwargs: None,
-        compile=compile_actions,
-    )
-    monkeypatch.setattr(
-        atomic_actions, "AtomicActionEngine", lambda *args, **kwargs: engine
-    )
-    monkeypatch.setattr(motion_generator, "MotionGenerator", lambda **kwargs: None)
-    monkeypatch.setattr(
-        pg_grasp, "AntipodalGraspPoseGenerator", lambda *args, **kwargs: None
-    )
-    cfg = EmbodiedEnvCfg(
-        num_envs=2,
-        sim_steps_per_control=4,
-        extensions={
-            "spatial_grid_size": 1,
-            "spatial_cube_x_range": [0.0, 0.0],
-            "spatial_cube_y_range": [0.0, 0.0],
-            "spatial_goal_x_range": [0.0, 0.0],
-            "spatial_goal_y_range": [0.0, 0.0],
-        },
-    )
-    task = embodichain_full_sdk.PickPlaceEnv(cfg)
-    task.reset()
-    return SimpleNamespace(
-        task=task,
-        bodies=bodies,
-        qpos=qpos,
-        invocations=invocations,
-        trajectories=trajectories,
-        module=embodichain_full_sdk,
-    )
-
-
-def test_embodichain_pick_success_requires_ten_distinct_released_steps(
-    embodichain_pick_task,
-):
-    """Repeated public info reads cannot manufacture placement dwell."""
-    case = embodichain_pick_task
-    task = case.task
-    for _ in range(9):
-        task.step(case.qpos.clone())
-    for _ in range(12):
-        success, _, metrics = task.compute_task_state()
-        assert success.tolist() == [False, False]
-        assert metrics["placement_stable_steps"].tolist() == [9, 9]
-    task.step(case.qpos.clone())
-    success, fail, metrics = task.compute_task_state()
-    assert success.tolist() == [True, True]
-    assert fail.tolist() == [False, False]
-    assert metrics["placement_released"].tolist() == [True, True]
-    assert torch.allclose(metrics["distance_to_goal"], torch.zeros(2), atol=1e-7)
-
-
-@pytest.mark.parametrize("unstable", ["closed_hand", "linear_speed", "angular_speed"])
-def test_embodichain_pick_instability_restarts_release_dwell(
-    embodichain_pick_task, unstable
-):
-    """Held or moving cubes cannot retain an earlier stable window."""
-    case = embodichain_pick_task
-    for _ in range(9):
-        case.task.step(case.qpos.clone())
-    if unstable == "closed_hand":
-        case.qpos[:, -2:] = case.module.HAND_RELEASE_QPOS_THRESHOLD - 0.001
-    elif unstable == "linear_speed":
-        case.bodies["cube"].body_data.lin_vel[:, 0] = (
-            case.module.PLACEMENT_LINEAR_SPEED_THRESHOLD + 0.01
-        )
-    else:
-        case.bodies["cube"].body_data.ang_vel[:, 2] = (
-            case.module.PLACEMENT_ANGULAR_SPEED_THRESHOLD + 0.01
-        )
-    case.task.step(case.qpos.clone())
-    success, _, metrics = case.task.compute_task_state()
-    assert success.tolist() == [False, False]
-    assert metrics["placement_stable_steps"].tolist() == [0, 0]
-
-
-def test_embodichain_pick_partial_reset_clears_selected_rows(embodichain_pick_task):
-    """A public partial reset cannot erase another row's completion evidence."""
-    case = embodichain_pick_task
-    for _ in range(10):
-        case.task.step(case.qpos.clone())
-    case.task.reset(options={"reset_ids": [1]})
-    success, _, metrics = case.task.compute_task_state()
-    assert success.tolist() == [True, False]
-    assert metrics["placement_stable_steps"].tolist() == [10, 0]
-
-
-def test_embodichain_pick_demo_exposes_one_joint_target_segment(embodichain_pick_task):
-    """The public segment retains grasp stabilization and released settle actions."""
-    case = embodichain_pick_task
-    segments = case.task.create_demo_segments()
-    assert len(segments) == 1
-    segment = segments[0]
-    assert segment.name == "pick_and_place"
-    assert segment.metadata["atomic_actions"] == ["pick_up", "place"]
-    assert segment.metadata["completion_criterion"] == "released_and_stable_10_steps_v1"
-    assert segment.metadata["target_pose"][0][2][3] == pytest.approx(0.035)
-    actions = list(segment.actions)
-    pickup, placement = case.trajectories
-    assert len(actions) == 90 + 60 + 90 + 10
-    stacked = torch.stack(actions, dim=1)
-    assert torch.equal(stacked[:, :58], pickup[:, :58])
-    assert torch.equal(stacked[:, 58:118], pickup[:, 57:58].repeat(1, 60, 1))
-    assert torch.equal(stacked[:, 118:150], pickup[:, 58:])
-    assert torch.equal(stacked[:, 150:240], placement)
-    assert torch.equal(stacked[:, -10:], placement[:, -1:].repeat(1, 10, 1))
-    assert segment.metadata["planned_action_steps"] == len(actions)
-    assert segment.validator().tolist() == [False, False]
-    for _ in range(10):
-        case.task.step(case.qpos.clone())
-    assert segment.validator().tolist() == [True, True]
-
-
-def test_embodichain_pick_correction_obeys_public_window_and_threshold(
-    embodichain_pick_task,
-):
-    """The opt-in helper stops taking over when its correction window expires."""
-    case = embodichain_pick_task
-    case.task.deterministic_grasp = True
-    expert = list(case.task.create_demo_segments()[0].actions)[0]
-    policy = expert + 1.0
-    corrected, flag = case.task.get_expert_correction_action(
-        policy, max_steps=2, deviation_threshold=0.5, force_steps=1
-    )
-    assert flag.tolist() == [True, True]
-    assert torch.equal(corrected, expert)
-    _, flag = case.task.get_expert_correction_action(
-        expert, max_steps=2, deviation_threshold=100.0, force_steps=1
-    )
-    assert flag.tolist() == [False, False]
-    corrected, flag = case.task.get_expert_correction_action(
-        policy, max_steps=2, deviation_threshold=0.0, force_steps=0
-    )
-    assert flag.tolist() == [False, False]
-    assert torch.equal(corrected, policy)
-
-
-def test_embodichain_pick_public_demo_seed_depends_on_object_poses(
-    embodichain_pick_task,
-):
-    """Repeated scene poses rewind stochastic SDK planning consistently."""
-    case = embodichain_pick_task
-    case.task.deterministic_grasp = True
-
-    def planned_actions():
-        return torch.stack(list(case.task.create_demo_segments()[0].actions), dim=1)
-
-    first = planned_actions()
-    assert torch.equal(first, planned_actions())
-    goal = case.bodies["goal_marker"]
-    changed = goal.get_local_pose(to_matrix=True)
-    changed[:, 0, 3] += 0.01
-    goal.set_local_pose(changed)
-    assert not torch.equal(first, planned_actions())
-
-
 _PANDA_GRASP_FRAME = [
     [0.0, 1.0, 0.0, 0.0],
     [-1.0, 0.0, 0.0, 0.0],
     [0.0, 0.0, 1.0, 0.0],
     [0.0, 0.0, 0.0, 1.0],
 ]
-
-
-@pytest.mark.parametrize("calibration", [None, _PANDA_GRASP_FRAME])
-def test_embodichain_pick_demo_forwards_and_records_grasp_frame(
-    embodichain_pick_task, calibration
-):
-    """The SDK receives the same calibration advertised by the public segment."""
-    case = embodichain_pick_task
-    if calibration is not None:
-        case.task.grasp_frame_to_eef = calibration
-    segment = case.task.create_demo_segments()[0]
-    pickup = case.invocations[0]
-    expected = torch.eye(4) if calibration is None else torch.tensor(calibration)
-    assert torch.equal(pickup.skill_options.grasp_frame_to_eef, expected)
-    assert segment.metadata["grasp_frame_to_eef"] == expected.tolist()
-    if calibration is not None:
-        assert torch.equal(
-            expected[:3, :3] @ torch.tensor([0.0, 1.0, 0.0]),
-            torch.tensor([1.0, 0.0, 0.0]),
-        )
-
-
-def test_embodichain_pick_demo_rejects_invalid_grasp_frame(embodichain_pick_task):
-    """An invalid SDK transform fails before compiling a motion invocation."""
-    case = embodichain_pick_task
-    case.task.grasp_frame_to_eef = [[1.0, 0.0], [0.0, 1.0]]
-    with pytest.raises(ValueError):
-        case.task.create_demo_segments()
-    assert not case.invocations
 
 
 @pytest.mark.parametrize(
@@ -5414,7 +4925,7 @@ def stack_cube_ppo_adapter(monkeypatch, tmp_path, embodichain_sdk_boundary):
         cfg = {
             "gym_config_path": str(
                 _ROOT
-                / _PICK_CONFIG_PREFIX
+                / _EMBODICHAIN_CONFIG_PREFIX
                 / "tasks/manipulation/stack_cube/task.panda.yaml"
             ),
             "panda_urdf": "test_asset.urdf",

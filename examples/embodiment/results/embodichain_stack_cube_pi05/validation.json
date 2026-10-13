@@ -93,5 +93,122 @@
     "doc_symbols_verified.log": "47c83cdd1dc6cd097a766329f2378a054f2324946263c09417ff2d95389b0ce5",
     "install_check_candidate.log": "5103f7a8344919a8b0ef9796f90839443dca8fb494a18233322fc93fadaf9995",
     "install_check_baseline.log": "6fc2923de2b6af0ba38e6aec5b9892f10f48e774701df2820580ebdd71411597"
+  },
+  "obsolete_task_cleanup": {
+    "parent_commit": "caf38e9d3f1577ca6b4d48c5667661be17f6d502",
+    "deleted_files": [
+      "examples/sft/config/embodichain_pick_place_sft_openpi_pi05_smoke_gripper_absolute_4gpu.yaml",
+      "examples/sft/config/embodichain_pick_place_sft_openpi_pi05_smoke_phase_4gpu.yaml",
+      "examples/sft/config/embodichain_pick_place_sft_openpi_pi05_smoke_4gpu.yaml",
+      "examples/sft/config/embodichain_pick_place_sft_openpi_pi05_smoke_state_4gpu.yaml",
+      "examples/sft/config/embodichain_pick_place_sft_openpi_pi05.yaml",
+      "examples/sft/config/embodichain_pick_place_sft_openpi_pi05_smoke.yaml",
+      "examples/sft/config/embodichain_pick_place_sft_openpi_pi05_smoke_single_gpu.yaml",
+      "examples/sft/config/embodichain_pick_place_sft_openpi_pi05_smoke_gripper_absolute.yaml",
+      "examples/sft/config/embodichain_pour_water_sft_openpi_pi05_smoke_single_gpu.yaml",
+      "examples/sft/config/embodichain_pour_water_sft_openpi_pi05.yaml",
+      "examples/sft/config/embodichain_pour_water_sft_openpi_pi05_smoke_4gpu.yaml",
+      "examples/sft/config/embodichain_pour_water_sft_openpi_pi05_smoke.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/env_smoke.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/env_smoke_train.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/env_smoke_val.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/task.franka_smoke_val_runtime.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/task.franka_val_id.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/env_ood.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/env_train.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/task.franka_ood.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/env_smoke_val_runtime.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/task.franka_smoke_train_runtime.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/task.franka_smoke_train.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/env_smoke_train_runtime.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/env_test_id.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/env_val_id.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/task.franka_smoke_val.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/task.franka_train.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/pick_place/task.franka_test_id.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_test_id.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_val_id.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/env_smoke.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/env_smoke_train.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/env_smoke_val.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/env_ood.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/env_train.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_train.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/env_test_id.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_smoke.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/env_val_id.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_smoke_val.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_smoke_train.yaml",
+      "rlinf/envs/sim/embodichain/configs/tasks/manipulation/tableware/pour_water/task.cobotmagic_ood.yaml",
+      "rlinf/envs/sim/embodichain/configs/components/embodiments/cobotmagic_vla.yaml",
+      "rlinf/envs/sim/embodichain/configs/components/embodiments/franka_panda_vla.yaml",
+      "rlinf/envs/sim/embodichain/tasks/__init__.py",
+      "rlinf/envs/sim/embodichain/tasks/pick_place.py",
+      "examples/embodiment/config/env/embodichain_pick_place_correction.yaml",
+      "toolkits/lerobot/analyze_pick_place_multimodality.py",
+      "toolkits/lerobot/audit_embodichain_dataset.py",
+      "toolkits/lerobot/check_embodichain_smoke.py",
+      "toolkits/lerobot/collect_embodichain_dagger.py",
+      "toolkits/lerobot/create_embodichain_manifest.py",
+      "toolkits/lerobot/evaluate_embodichain_openpi.py",
+      "toolkits/standalone_eval_scripts/embodichain_openpi_eval.py",
+      "toolkits/standalone_eval_scripts/openpi_process_predictor.py",
+      "rlinf/models/embodiment/openpi/dataconfig/embodichain_dataconfig.py",
+      "rlinf/models/embodiment/openpi/policies/embodichain_policy.py"
+    ],
+    "model_regression": {
+      "command": "CUDA_VISIBLE_DEVICES='' JAX_PLATFORMS=cpu python -m pytest -q -p no:cacheprovider tests/unit_tests/test_data.py tests/unit_tests/test_models.py tests/unit_tests/test_real_env.py tests/unit_tests/test_worker.py tests/unit_tests/test_fsdp.py -k 'openpi or embodichain or stack_cube'",
+      "passed": 137,
+      "skipped": 9,
+      "failed": 0,
+      "skip_reasons": {
+        "SDK_absent": 7,
+        "CUDA_unavailable": 2
+      }
+    },
+    "SDK_regression": {
+      "test_nodes": [
+        "tests/unit_tests/test_real_env.py::test_embodichain_stack_cube_physical_completion",
+        "tests/unit_tests/test_real_env.py::test_embodichain_stack_cube_dwell_resets_after_instability"
+      ],
+      "passed": 7,
+      "failed": 0
+    },
+    "distinct_passed_cases": 144,
+    "remaining_CUDA_cases_skipped": 2,
+    "docs": {
+      "en_warnings": 0,
+      "zh_warnings": 0,
+      "markup_passed": true,
+      "symbols_passed_with_verified_literals": true
+    },
+    "wheel": {
+      "wheel_sha256": "52f215ea80be6d0ee4861e36580356ab635c1adee427ce8ae1b0557499473a1e",
+      "remaining_task_yaml": [
+        "rlinf/envs/sim/embodichain/configs/components/embodiments/isaaclab_panda.yaml",
+        "rlinf/envs/sim/embodichain/configs/components/execution_policies/stack_cube.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/env.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task.panda.formal_expert.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task.panda.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task_program/integration.formal_expert.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task_program/integration.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task_program/program.yaml"
+      ],
+      "deleted_files_absent": true,
+      "obsolete_entry_point_absent": true
+    },
+    "precommit_all_files": "passed",
+    "obsolete_references_in_current_code_configs_and_docs": 0,
+    "GPU_jobs_launched": false,
+    "training_rerun": false,
+    "log_sha256": {
+      "model_tests.log": "bb937ceee7f32c9b4d8cb5375d071159531a77c56df013461f45e03fb8eca598",
+      "model_tests.xml": "f8ddcf260751f0e3251ea11b241d6d6efa0725b49e1b0bd778bcd2d81dfc3e7d",
+      "SDK_tests.log": "0614faa03a6984312bf8af5fd82e68b9e0d2bf904508637d01dccd93d9306ba7",
+      "SDK_tests.xml": "dc2907a1f397e9ab2610b9cd2123df6de991f5089ef3c229dfad0955eaefca7c",
+      "docs_build.log": "ab561c0a6eef38fa941e701532d406eda0f3870bece99da3f82e2fa81f28fca1",
+      "precommit.log": "716d0ad0e8aad25596efd61134aa4d2a27c1ac5dbf1e85d120c05dc20de21384",
+      "wheel_build.log": "b9c8a89b1bf377f81741c255ba989b5b24d5ba6956ec055fd0e0e3e2e33a2e8e"
+    }
   }
 }

@@ -431,10 +431,6 @@ class EmbodiChainEnv(gym.Env):
         discover_task_packages()
         execute_init_hooks()
 
-        # Source checkouts also register the tasks when their entry-point
-        # metadata has not yet been installed.
-        from rlinf.envs.sim.embodichain import tasks  # noqa: F401
-
         gym_config_path_str = str(gym_config_path_cfg)
         gym_config_path = _resolve_gym_config_path(gym_config_path_str)
         gym_config = load_config(gym_config_path)
