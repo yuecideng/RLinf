@@ -4841,7 +4841,17 @@ def test_isaaclab_stack_eval_preserves_dataset_euler_and_signed_fingers():
 
 
 @pytest.fixture
-def stack_cube_ppo_adapter(monkeypatch, tmp_path, embodichain_sdk_boundary):
+def embodichain_reward_sdk():
+    """Use the real SDK reward manager without creating a simulator."""
+    return pytest.importorskip(
+        "embodichain.lab.gym.envs.managers", exc_type=ImportError
+    )
+
+
+@pytest.fixture
+def stack_cube_ppo_adapter(
+    monkeypatch, tmp_path, embodichain_reward_sdk, embodichain_sdk_boundary
+):
     """Exercise Gym transitions with a deterministic scene at the SDK boundary."""
     import json
 
@@ -4857,6 +4867,8 @@ def stack_cube_ppo_adapter(monkeypatch, tmp_path, embodichain_sdk_boundary):
     class Scene:
         def __init__(self, num_envs):
             self.num_envs = num_envs
+            self.device = torch.device("cpu")
+            self.closed = False
             self.time = 0
             self.seeds = torch.zeros(num_envs)
             self.outcome = "early_done"
@@ -4865,6 +4877,9 @@ def stack_cube_ppo_adapter(monkeypatch, tmp_path, embodichain_sdk_boundary):
             self.time = 0
             self.seeds = torch.tensor([r["seed"] for r in requests])
             return self.observation(), {}
+
+        def reset_request(self, request, *, initial_state=None):
+            return self.reset_requests([request])
 
         def observation(self):
             return {
@@ -4899,8 +4914,11 @@ def stack_cube_ppo_adapter(monkeypatch, tmp_path, embodichain_sdk_boundary):
                 positions, fingers, linear, torch.zeros(self.num_envs, 3)
             )
 
+        def stack_metrics(self):
+            return self.batch_stack_metrics()
+
         def close(self, **kwargs):
-            pass
+            self.closed = True
 
     scenes = []
 
@@ -4952,6 +4970,123 @@ def stack_cube_ppo_adapter(monkeypatch, tmp_path, embodichain_sdk_boundary):
     finally:
         if previous_native is None:
             sys.modules.pop(native_name, None)
+
+
+@pytest.mark.parametrize("num_envs", [1, 8, 32])
+@pytest.mark.parametrize("preset", ["isaaclab", "evaluation"])
+def test_stack_cube_reward_manager_matches_previous_formula(
+    embodichain_reward_sdk, num_envs, preset
+):
+    """Actual SDK composition preserves rewards across success and done masks."""
+    cfg_path = (
+        _ROOT
+        / _EMBODICHAIN_CONFIG_PREFIX
+        / "tasks/manipulation/stack_cube/rewards.yaml"
+    )
+    presets = OmegaConf.to_container(OmegaConf.load(cfg_path), resolve=True)
+    cfg = {
+        name: embodichain_reward_sdk.RewardCfg(**term)
+        for name, term in presets[preset].items()
+    }
+    env = SimpleNamespace(num_envs=num_envs, device="cpu")
+    manager = embodichain_reward_sdk.RewardManager(cfg, env)
+    rng = torch.Generator().manual_seed(42)
+    for _ in range(450):
+        success = torch.rand(num_envs, generator=rng) > 0.5
+        active = torch.rand(num_envs, generator=rng) > 0.5
+        info = {
+            "baseline_success": success,
+            "success": success,
+            "reward_active": active,
+        }
+        reward, terms = manager.compute(obs={}, action=None, info=info)
+        torch.testing.assert_close(reward, success.float() * active, rtol=0, atol=0)
+        assert reward.shape == (num_envs,)
+        assert reward.dtype == torch.float32
+        assert set(terms) == {
+            "stack_success" if preset == "isaaclab" else "stable_success"
+        }
+    manager.reset()
+
+
+def test_stack_cube_reward_weight_changes_score_without_changing_termination(
+    stack_cube_ppo_adapter, tmp_path
+):
+    """A user-authored RewardCfg changes scores while preserving episode rules."""
+    path = (
+        _ROOT
+        / _EMBODICHAIN_CONFIG_PREFIX
+        / "tasks/manipulation/stack_cube/rewards.yaml"
+    )
+    presets = OmegaConf.load(path)
+    presets.isaaclab.stack_success.weight = 0.25
+    custom = tmp_path / "custom_rewards.yaml"
+    OmegaConf.save(presets, custom)
+    env, _ = stack_cube_ppo_adapter(reward_config_path=str(custom))
+    env.reset()
+    _, rewards, terms, _, infos = env.chunk_step(torch.zeros(3, 5, 7))
+    assert rewards.tolist() == [[0, 0.25, 0, 0, 0], [0] * 5, [0] * 5]
+    assert terms[0].tolist() == [False, True, False, False, False]
+    assert terms[1].tolist() == [False, False, True, False, False]
+    assert infos[1]["rewards"]["stack_success"].tolist() == [1, 0, 0]
+    env.reset()
+    _, reset_rewards, *_ = env.chunk_step(torch.zeros(3, 5, 7))
+    torch.testing.assert_close(reset_rewards, rewards, rtol=0, atol=0)
+
+
+def test_stack_cube_reward_manager_closes_scene_after_invalid_term(
+    stack_cube_ppo_adapter, monkeypatch, tmp_path
+):
+    """Failure to resolve a user reward term releases the allocated simulator."""
+    from rlinf.envs.sim.embodichain import stack_cube as native
+
+    path = (
+        _ROOT
+        / _EMBODICHAIN_CONFIG_PREFIX
+        / "tasks/manipulation/stack_cube/rewards.yaml"
+    )
+    presets = OmegaConf.load(path)
+    presets.isaaclab.stack_success.func = (
+        "rlinf.envs.sim.embodichain.stack_cube_metrics:missing_reward"
+    )
+    custom = tmp_path / "invalid_rewards.yaml"
+    OmegaConf.save(presets, custom)
+    scenes = []
+    build = native.build_stack_cube_env
+
+    def build_scene(*args, **kwargs):
+        scene = build(*args, **kwargs)
+        scenes.append(scene)
+        return scene
+
+    monkeypatch.setattr(native, "build_stack_cube_env", build_scene)
+    with pytest.raises(AttributeError, match="missing_reward"):
+        stack_cube_ppo_adapter(reward_config_path=str(custom))
+    assert len(scenes) == 1 and scenes[0].closed
+
+
+def test_stack_cube_evaluation_reward_preserves_twenty_step_dwell(
+    stack_cube_ppo_adapter,
+):
+    """Evaluation scores require twenty consecutive stable frames after a reset."""
+    env, scene = stack_cube_ppo_adapter(
+        1, stack_cube_reward="evaluation", max_episode_steps=40
+    )
+    scene.outcome = "stability"
+    env.reset()
+    rewards = []
+    for _ in range(40):
+        _, reward, terminated, _, info = env.step(torch.zeros(1, 7))
+        rewards.append(reward.item())
+        assert not terminated.any()
+        torch.testing.assert_close(
+            reward, info["episode"]["success_at_end"].float(), rtol=0, atol=0
+        )
+    # The scripted instability at frame 12 restarts the stable-frame count.
+    assert rewards == [0.0] * 31 + [1.0] * 9
+    env.reset()
+    _, reward, *_ = env.step(torch.zeros(1, 7))
+    assert reward.item() == 0.0
 
 
 def test_stack_cube_ppo_preserves_first_done_and_terminal_observations(

@@ -472,7 +472,25 @@ SFT 验证通过后准备 PPO
 
 选定的 SFT checkpoint 达到固定闭环门槛后，再启动 PPO：局部 validation 至少成功 4/8，独立局部 test 至少成功 8/16，随后每个 seed 的正式 validation 至少成功 6/27。成功要求在 450 步评估的最后 20 个控制步中，两层堆叠均保持稳定且夹爪已经释放。训练前还需验证批量仿真、reward、权重同步和 checkpoint 恢复；CPU contract 测试不能代替 GPU 可行性验证。
 
-Stack Cube 环境通过 ``stack_cube_reward: isaaclab`` 显式选择 PPO reward。在 20 Hz 控制频率下，基准堆叠成功的每一步获得 reward 1，对齐参考任务的权重 20 乘以 0.05 s 控制周期。任一积木掉到 z=-0.05 m 以下时，episode 结束且不获得成功 reward。稳定完成独立计分，不替换参考 reward 判据。
+Stack Cube 环境通过 ``stack_cube_reward: isaaclab`` 显式选择 PPO reward。在 20 Hz 控制频率下，基准堆叠成功的每一步获得 reward 1，对齐参考任务的权重 20 乘以 0.05 s 控制周期。任一积木掉到 z=-0.05 m 以下时，episode 结束。稳定完成独立计分，不替换参考 reward 判据。
+
+Adapter 使用 EmbodiChain 的 ``RewardManager`` 合成 reward term，配置由 ``reward_config_path`` 指定。内置 ``rewards.yaml`` 提供两套 ``RewardCfg`` preset：``isaaclab`` 按基准堆叠成功计分，``evaluation`` 按连续 20 步稳定计分。连续步数和 episode 活跃状态由 adapter 管理，因此 manager 接收的判据和 mask 与原实现一致。各 term 的值通过 ``info["rewards"]`` 返回。SDK Reward Manager 直接应用权重；默认权重已经是每个控制步 1，不能再次乘以控制周期。
+
+需要调整权重时，复制内置文件，并通过 ``env.train.reward_config_path`` 或 ``env.eval.reward_config_path`` 指向新文件。PPO preset 如下：
+
+.. code-block:: yaml
+
+   isaaclab:
+     stack_success:
+       func: rlinf.envs.sim.embodichain.stack_cube_metrics:stack_cube_success_reward
+       mode: add
+       weight: 1.0
+       params:
+         success_key: baseline_success
+
+修改权重会改变训练目标。下方已测结果使用默认权重和原有的成功、终止判据。CartPole 继续使用其任务原生 reward。
+
+:download:`Reward 迁移对照记录 <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/reward_manager_parity.json>` 包含针对旧 adapter 的 14 组 CPU 轨迹：74,700 个 reward 标量及已有观测、done、episode 字段均完全一致。检查使用真实 SDK RewardManager 和预设的场景测量值，没有重新运行 GPU 物理仿真或 PPO 训练。
 
 使用确定性 SFT 裁剪训练的 checkpoint 应保持 ``actor.model.openpi.eval_sft_image_crop: true``。在此 recipe 中，该设置同时作用于 RL 评估、随机训练 rollout 和 actor logprob 重算；三条路径采用相同的前视图像裁剪，不使用数据增强 RNG，腕部图像保持原有取景。第一次 optimizer update 前，需确认 policy 权重保持一致、保存与重算的 logprob 一致，并重新验证选定 checkpoint 的闭环成功率。新增 value head 单独初始化。
 

@@ -210,5 +210,61 @@
       "precommit.log": "716d0ad0e8aad25596efd61134aa4d2a27c1ac5dbf1e85d120c05dc20de21384",
       "wheel_build.log": "b9c8a89b1bf377f81741c255ba989b5b24d5ba6956ec055fd0e0e3e2e33a2e8e"
     }
+  },
+  "reward_manager_migration": {
+    "parent_commit": "ee7fa398d2649fa6dedacb5db043b713b714c626",
+    "sdk_changes_required": false,
+    "sdk_commit": "21531b77c1deb5856a5aa11e3a3d8c6cbbeed9d3",
+    "configuration": "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/rewards.yaml",
+    "tests": {
+      "model": {
+        "passed": 129,
+        "skipped": 26,
+        "failed": 0
+      },
+      "SDK": {
+        "passed": 38,
+        "skipped": 0,
+        "failed": 0
+      },
+      "distinct_passed": 153,
+      "remaining_skips": 2
+    },
+    "model_test_command": "CUDA_VISIBLE_DEVICES='' JAX_PLATFORMS=cpu python -m pytest -q -p no:cacheprovider tests/unit_tests/test_data.py tests/unit_tests/test_models.py tests/unit_tests/test_real_env.py tests/unit_tests/test_worker.py tests/unit_tests/test_fsdp.py -k 'openpi or embodichain or stack_cube'",
+    "SDK_test_command": "CUDA_VISIBLE_DEVICES='' JAX_PLATFORMS=cpu python -m pytest -q -p no:cacheprovider tests/unit_tests/test_real_env.py -k 'stack_cube or embodichain'",
+    "trace_parity_report": "reward_manager_parity.json",
+    "trace_cases": 14,
+    "scalar_rewards_compared": 74700,
+    "rtol": 0,
+    "atol": 0,
+    "random_predicate_scalar_comparisons": 36900,
+    "existing_episode_fields_preserved": true,
+    "invalid_term_constructor_cleanup_verified": true,
+    "docs": {
+      "en_warnings": 0,
+      "zh_warnings": 0,
+      "markup_passed": true,
+      "symbols_passed_with_verified_literals": true
+    },
+    "wheel": {
+      "yaml_resources": 9,
+      "reward_config_packaged": true,
+      "reward_config_sha256": "eb6d77e8fe39c27b6241180ffa394bc3c8a2772e73d51f476652f09a0a4b1068",
+      "wheel_sha256": "a12c28253602df2f52b468aaabed961b212d093782253966352b908ef3393ebb"
+    },
+    "precommit_all_files": "passed",
+    "GPU_jobs_launched": false,
+    "training_rerun": false,
+    "log_sha256": {
+      "model_tests.log": "8b48018c3f493da93b8b12b410875237daf841123f66d4fd6d28e98250544f38",
+      "model_tests.xml": "259ff03c53739975887d7f4e371fc8aa2a21c01de8a5573e4cf1c08599d1e35d",
+      "SDK_tests.log": "088e03902bb75b13a37b44e530c145cce5d8abe17e3a5ef399709680da912b5c",
+      "SDK_tests.xml": "ef2e22a04b9e43bbf3acf42d82355d7557f8895d237ce84269676ce329c49f75",
+      "docs_build.log": "ab561c0a6eef38fa941e701532d406eda0f3870bece99da3f82e2fa81f28fca1",
+      "precommit.log": "716d0ad0e8aad25596efd61134aa4d2a27c1ac5dbf1e85d120c05dc20de21384",
+      "wheel_build.log": "ce6cd31557dedae132a0062b1786baae35f3a0f2f69ebcb82420a1d03502c1c4",
+      "trace_tests.log": "73c7f96972979cd5dd4e0a6fc253461d633226cdee3d3d1e57c24b1aa51e517b",
+      "trace_tests.xml": "0e794005a4bd56210d2abd2c0d15f706b636ddffe3ac3c41ab9f7307c0091aff"
+    }
   }
 }

@@ -302,6 +302,7 @@ class EmbodiChainEnv(gym.Env):
         self._stack_requests = []
         self._stack_request_index = 0
         self._stack_stable_steps = 0
+        self.reward_manager = None
         self.env = self._build_env()
         if not self.auto_reset:
             # EmbodiChain performs its own reset after terminal transitions.
@@ -374,6 +375,8 @@ class EmbodiChainEnv(gym.Env):
             self.fail_once.zero_()
             self.returns.zero_()
             self._elapsed_steps.zero_()
+            if self.reward_manager is not None:
+                self.reward_manager.reset()
             return
 
         env_idx = torch.as_tensor(env_idx, dtype=torch.long, device=self.device)
@@ -472,6 +475,24 @@ class EmbodiChainEnv(gym.Env):
                 self._stack_request_index = self.seed_offset * self.num_envs
             self._stack_cube = True
             self.task_prompt = "Stack the red block on the blue block, then stack the green block on the red block"
+            from embodichain.lab.gym.envs.managers import RewardCfg, RewardManager
+            from omegaconf import OmegaConf
+
+            reward_path = _resolve_gym_config_path(
+                str(
+                    _cfg_get(
+                        self.cfg,
+                        "reward_config_path",
+                        Path(__file__).parent
+                        / "configs/tasks/manipulation/stack_cube/rewards.yaml",
+                    )
+                )
+            )
+            presets = OmegaConf.to_container(OmegaConf.load(reward_path), resolve=True)
+            preset = "isaaclab" if self._stack_ppo else "evaluation"
+            reward_cfg = {
+                name: RewardCfg(**term) for name, term in presets[preset].items()
+            }
             env = build_stack_cube_env(
                 _cfg_get(self.cfg, "panda_urdf"),
                 seed=self.seed,
@@ -479,6 +500,11 @@ class EmbodiChainEnv(gym.Env):
                 max_episode_steps=self.max_episode_steps,
                 num_envs=self.num_envs,
             )
+            try:
+                self.reward_manager = RewardManager(reward_cfg, env)
+            except Exception:
+                env.close(exit_process=False)
+                raise
             env.action_space = gym.spaces.Box(
                 -np.inf, np.inf, shape=(7,), dtype=np.float32
             )
@@ -846,10 +872,14 @@ class EmbodiChainEnv(gym.Env):
         success = torch.tensor([self._stack_stable_steps >= 20], device=self.device)
         terminations = torch.zeros_like(success)
         truncations = self._elapsed_steps >= self.max_episode_steps
-        # This adapter exposes an evaluation score, not an IsaacLab PPO reward.
-        rewards = success.float()
+        rewards, reward_terms = self.reward_manager.compute(
+            obs=raw_obs,
+            action=actions,
+            info={"success": success, "reward_active": torch.ones_like(success)},
+        )
         infos = self._record_metrics(
-            rewards, {"success": success, "stack_metrics": metrics}
+            rewards,
+            {"success": success, "stack_metrics": metrics, "rewards": reward_terms},
         )
         infos["episode"]["success_at_end"] = success.clone()
         infos["applied_action"] = actions.clone()
@@ -888,7 +918,11 @@ class EmbodiChainEnv(gym.Env):
         baseline = metrics["baseline_success"]
         stable = self._stack_stable_steps >= 20
         active = ~self._stack_terminated
-        rewards = baseline.float() * active
+        rewards, reward_terms = self.reward_manager.compute(
+            obs=raw_obs,
+            action=actions,
+            info={"baseline_success": baseline, "reward_active": active},
+        )
         terminations = (baseline | metrics["failure"]) & active
         if self.ignore_terminations:
             terminations = torch.zeros_like(terminations)
@@ -896,7 +930,12 @@ class EmbodiChainEnv(gym.Env):
         truncations = self._elapsed_steps >= self.max_episode_steps
         infos = self._record_metrics(
             rewards,
-            {"success": stable, "fail": metrics["failure"], "stack_metrics": metrics},
+            {
+                "success": stable,
+                "fail": metrics["failure"],
+                "stack_metrics": metrics,
+                "rewards": reward_terms,
+            },
         )
         infos["episode"]["success_at_end"] = stable.clone()
         infos["episode"]["baseline_success_at_end"] = baseline.clone()
