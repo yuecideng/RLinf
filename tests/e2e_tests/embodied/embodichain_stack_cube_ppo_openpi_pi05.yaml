@@ -1,0 +1,25 @@
+# Integration coverage uses the public base model and reference train statistics.
+defaults:
+  - embodichain_franka_stack_cube_ppo_openpi_pi05_smoke
+  - _self_
+
+hydra:
+  searchpath:
+    - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+runner:
+  logger:
+    log_path: /workspace/results/embodichain_stack_cube_ppo_openpi_pi05
+    experiment_name: ci-test
+    logger_backends: [tensorboard]
+  max_epochs: 1
+  val_check_interval: -1
+  save_interval: 1
+
+algorithm:
+  update_epoch: 1
+
+env:
+  eval:
+    video_cfg:
+      save_video: false

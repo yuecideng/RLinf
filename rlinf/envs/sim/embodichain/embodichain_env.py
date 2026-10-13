@@ -13,7 +13,9 @@
 # limitations under the License.
 
 import copy
+import json
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -39,6 +41,27 @@ def _resolve_gym_config_path(gym_config_path: str) -> Path:
         rel_path: Optional[Path] = None
     else:
         rel_path = raw
+
+    if rel_path is not None and rel_path.parts[:1] == ("rlinf",):
+        package_root = Path(__file__).resolve().parents[3]
+        candidate = (package_root / Path(*rel_path.parts[1:])).resolve()
+        if not candidate.is_relative_to(package_root):
+            raise ValueError("RLinf gym config must stay within the package.")
+        resolved = _try_resolve(candidate)
+        if resolved is None:
+            raise FileNotFoundError(f"RLinf gym config not found: {candidate}")
+        return resolved
+
+    if rel_path is not None and rel_path.parts[:2] == (
+        "embodichain_tasks",
+        "configs",
+    ):
+        from embodichain.utils.config_paths import resolve_config_path
+
+        candidate = Path(resolve_config_path(rel_path))
+        resolved = _try_resolve(candidate)
+        if resolved is not None:
+            return resolved
 
     root = os.environ.get("EMBODICHAIN_PATH")
     if root and rel_path is not None:
@@ -77,6 +100,85 @@ def _cfg_get(cfg: Any, key: str, default: Any = None) -> Any:
     if isinstance(cfg, dict):
         return cfg.get(key, default)
     return getattr(cfg, key, default)
+
+
+def _text_from_value(value: Any, *, _depth: int = 0) -> Optional[str]:
+    """Extract a task instruction from common EmbodiChain metadata shapes."""
+    if _depth > 8 or value is None:
+        return None
+    if isinstance(value, str):
+        value = value.strip()
+        return value or None
+    if isinstance(value, Mapping):
+        for key in (
+            "lang",
+            "task_prompt",
+            "instruction",
+            "task_description",
+            "dataset",
+            "env",
+            "lerobot",
+            "params",
+            "metadata",
+            "text",
+        ):
+            prompt = _text_from_value(value.get(key), _depth=_depth + 1)
+            if prompt:
+                return prompt
+        return None
+    if isinstance(value, (list, tuple)):
+        for item in value:
+            prompt = _text_from_value(item, _depth=_depth + 1)
+            if prompt:
+                return prompt
+    return None
+
+
+def _env_task_prompt(env: Any) -> Optional[str]:
+    """Read the dataset instruction exposed by an EmbodiChain environment."""
+    seen: set[int] = set()
+    current = env
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        for attr in ("task_prompt", "instruction", "task_description"):
+            prompt = _text_from_value(getattr(current, attr, None))
+            if prompt:
+                return prompt
+        prompt = _text_from_value(getattr(current, "metadata", None))
+        if prompt:
+            return prompt
+        current = getattr(current, "unwrapped", None)
+    return None
+
+
+def _normalise_task_descriptions(value: Any, num_envs: int) -> list[str]:
+    """Return one string instruction per vectorized environment row."""
+    if isinstance(value, np.ndarray):
+        value = value.tolist()
+    if isinstance(value, (list, tuple)) and len(value) == num_envs:
+        return [str(item) if item is not None else "" for item in value]
+    prompt = _text_from_value(value) or ""
+    return [prompt] * num_envs
+
+
+def _config_task_prompt(
+    config: Mapping[str, Any], config_path: Path, load_config
+) -> Optional[str]:
+    """Extract an instruction from a Gym config or its environment component."""
+    prompt = _text_from_value(config)
+    if prompt:
+        return prompt
+    environment = config.get("environment")
+    if not isinstance(environment, Mapping) or "component" not in environment:
+        return None
+    from embodichain.utils.config_paths import resolve_config_path
+
+    component_path = resolve_config_path(
+        str(environment["component"]), base_dir=config_path.parent
+    )
+    if not component_path.is_file():
+        return None
+    return _text_from_value(load_config(component_path))
 
 
 def _resolve_sim_device_and_gpu_id(
@@ -159,8 +261,35 @@ class EmbodiChainEnv(gym.Env):
         self.auto_reset = bool(_cfg_get(cfg, "auto_reset", True))
         self.ignore_terminations = bool(_cfg_get(cfg, "ignore_terminations", False))
         self.max_episode_steps = int(_cfg_get(cfg, "max_episode_steps", 500))
+        correction_cfg = _cfg_get(cfg, "correction", None)
+        self.correction_enabled = bool(_cfg_get(correction_cfg, "enabled", False))
+        self.correction_max_steps = int(_cfg_get(correction_cfg, "max_steps", 50))
+        self.correction_deviation_threshold = float(
+            _cfg_get(correction_cfg, "deviation_threshold", 0.05)
+        )
+        self.correction_force_steps = int(_cfg_get(correction_cfg, "force_steps", 10))
+        if self.correction_max_steps < 0 or self.correction_force_steps < 0:
+            raise ValueError("EmbodiChain correction step limits must be non-negative.")
+        if self.correction_deviation_threshold < 0.0:
+            raise ValueError(
+                "EmbodiChain correction deviation threshold must be non-negative."
+            )
         self.video_cfg = _cfg_get(cfg, "video_cfg", None)
         self.state_keys = list(_cfg_get(cfg, "state_keys", ["qpos", "qvel", "qf"]))
+        self.main_camera_uid = _cfg_get(cfg, "main_camera_uid", "cam_high")
+        self.wrist_camera_uids = list(_cfg_get(cfg, "wrist_camera_uids", []))
+        self.action_application_mode = str(
+            _cfg_get(cfg, "action_application_mode", "target_position")
+        )
+        self.clip_actions = bool(_cfg_get(cfg, "clip_actions", False))
+        if self.action_application_mode not in {"target_position", "current_qpos"}:
+            raise ValueError(
+                "EmbodiChain action_application_mode must be 'target_position' "
+                f"or 'current_qpos', got {self.action_application_mode!r}."
+            )
+        self.task_prompt = _text_from_value(
+            _cfg_get(cfg, "task_prompt", _cfg_get(cfg, "task_description", None))
+        )
         self._sim_device, self._gpu_id = _resolve_sim_device_and_gpu_id(
             cfg, worker_info
         )
@@ -168,7 +297,19 @@ class EmbodiChainEnv(gym.Env):
         self._is_start = True
         self._elapsed_steps = torch.zeros(0, dtype=torch.int32)
 
+        self._stack_cube = False
+        self._stack_ppo = False
+        self._stack_requests = []
+        self._stack_request_index = 0
         self.env = self._build_env()
+        if not self.auto_reset:
+            # EmbodiChain performs its own reset after terminal transitions.
+            # Keep the terminal simulator state available to evaluators that
+            # explicitly request no auto-reset, matching replay semantics.
+            setattr(self.env, "_replay_no_auto_reset", True)
+        if self.task_prompt is None:
+            self.task_prompt = _env_task_prompt(self.env)
+        self.task_descriptions = [self.task_prompt or ""] * self.num_envs
         action_low = np.asarray(self.env.action_space.low, dtype=np.float32)
         action_high = np.asarray(self.env.action_space.high, dtype=np.float32)
         if action_low.ndim > 1:
@@ -278,7 +419,6 @@ class EmbodiChainEnv(gym.Env):
             discover_task_packages,
             execute_init_hooks,
         )
-        from embodichain.lab.sim import SimulationManagerCfg
         from embodichain.utils.utility import load_config
 
         gym_config_path_cfg = _cfg_get(self.cfg, "gym_config_path")
@@ -291,28 +431,150 @@ class EmbodiChainEnv(gym.Env):
         execute_init_hooks()
 
         gym_config_path_str = str(gym_config_path_cfg)
-        # load_config resolves repository-style embodichain_tasks/configs/...
-        # paths from the installed wheel; fall back to local/EMBODICHAIN_PATH
-        # resolution for absolute or legacy relative configs.
-        if gym_config_path_str.startswith("embodichain_tasks/"):
-            gym_config = load_config(gym_config_path_str)
-        else:
-            gym_config_path = _resolve_gym_config_path(gym_config_path_str)
-            gym_config = load_config(str(gym_config_path))
+        gym_config_path = _resolve_gym_config_path(gym_config_path_str)
+        gym_config = load_config(gym_config_path)
+        if gym_config["id"] == "RLinf-StackCube-Expert-v1":
+            from rlinf.envs.sim.embodichain.stack_cube import build_stack_cube_env
+
+            protocol = _cfg_get(self.cfg, "stack_cube_protocol", "evaluation")
+            if protocol not in {"evaluation", "isaaclab"}:
+                raise ValueError("Stack Cube protocol must be evaluation or isaaclab.")
+            self._stack_ppo = protocol == "isaaclab"
+            if self.num_envs != 1 and not self._stack_ppo:
+                raise ValueError(
+                    "Stack Cube frozen-manifest evaluation requires num_envs=1."
+                )
+            if self._stack_ppo and self.auto_reset and not self.ignore_terminations:
+                raise ValueError(
+                    "Stack Cube PPO requires auto_reset=false; selective physical "
+                    "resets cannot safely clear contacts in the shared world."
+                )
+            if (
+                self.correction_enabled
+                or self.action_application_mode != "target_position"
+                or self.clip_actions
+            ):
+                raise ValueError(
+                    "Stack Cube evaluation requires uncorrected relative EEF control without clipping."
+                )
+            requests_path = _cfg_get(self.cfg, "request_manifest")
+            if not requests_path:
+                raise ValueError("Stack Cube requires a frozen request_manifest.")
+            self._stack_requests = json.loads(Path(requests_path).read_text())[
+                "requests"
+            ]
+            if not self._stack_requests:
+                raise ValueError("Stack Cube request manifest must not be empty.")
+            if self._stack_ppo and len(self._stack_requests) < self.num_envs:
+                raise ValueError("Stack Cube needs at least one request per scene.")
+            if self._stack_ppo:
+                self._stack_request_index = self.seed_offset * self.num_envs
+            self._stack_cube = True
+            self.task_prompt = "Stack the red block on the blue block, then stack the green block on the red block"
+            env = build_stack_cube_env(
+                _cfg_get(self.cfg, "panda_urdf"),
+                seed=self.seed,
+                device=str(self.device),
+                max_episode_steps=self.max_episode_steps,
+                num_envs=self.num_envs,
+                protocol=protocol,
+                gym_config_path=gym_config_path,
+                ignore_terminations=self.ignore_terminations,
+            )
+            env.action_space = gym.spaces.Box(
+                -np.inf, np.inf, shape=(7,), dtype=np.float32
+            )
+            return env
+        if self.task_prompt is None:
+            self.task_prompt = _config_task_prompt(
+                gym_config, gym_config_path, load_config
+            )
+
+        # Dataset recorders belong to expert-data generation. Evaluation must
+        # never write to a task's generation-time ``save_path`` (often a
+        # placeholder such as ``/path/to/datasets``).
+        if bool(_cfg_get(self.cfg, "is_eval", False)) or bool(
+            _cfg_get(self.cfg, "disable_dataset_recording", False)
+        ):
+            gym_config = deepcopy(gym_config)
+            env_config = gym_config.get("env")
+            if isinstance(env_config, dict):
+                env_config.pop("dataset", None)
 
         env_cfg = config_to_cfg(
-            deepcopy(gym_config), manager_modules=get_manager_modules()
+            deepcopy(gym_config),
+            manager_modules=get_manager_modules(),
+            source_path=str(gym_config_path),
         )
         env_cfg.num_envs = self.num_envs
         env_cfg.max_episode_steps = self.max_episode_steps
-        env_cfg.sim_cfg = SimulationManagerCfg(
-            headless=bool(_cfg_get(self.cfg, "headless", True)),
-            sim_device=self._sim_device,
-            gpu_id=self._gpu_id,
-        )
+        env_cfg.sim_cfg.headless = bool(_cfg_get(self.cfg, "headless", True))
+        env_cfg.sim_cfg.sim_device = self._sim_device
+        env_cfg.sim_cfg.gpu_id = self._gpu_id
+        if bool(_cfg_get(self.cfg, "is_eval", False)) or bool(
+            _cfg_get(self.cfg, "disable_dataset_recording", False)
+        ):
+            # EmbodiChain keeps dataset manager declarations in reusable
+            # component YAMLs, so stripping ``env.dataset`` above is not
+            # sufficient for every task. Use its public config switch after
+            # component expansion as well.
+            env_cfg.filter_dataset_saving = True
         return build_env(gym_config["id"], base_env_cfg=env_cfg)
 
-    def _wrap_obs(self, raw_obs: dict[str, Any]) -> dict[str, torch.Tensor]:
+    def _get_sensor_image(
+        self, raw_obs: dict[str, Any], sensor_uid: str
+    ) -> Optional[torch.Tensor]:
+        """Return one camera's RGB image in ``[B, H, W, 3]`` format."""
+        sensors = raw_obs.get("sensor")
+        if sensors is None:
+            return None
+        if sensor_uid not in sensors:
+            raise KeyError(
+                f"Configured EmbodiChain camera {sensor_uid!r} is missing; "
+                f"available sensors: {list(sensors.keys())}."
+            )
+
+        sensor_data = sensors[sensor_uid]
+        if isinstance(sensor_data, Mapping):
+            image = sensor_data.get("color", sensor_data.get("rgb"))
+        else:
+            image = sensor_data
+        if image is None:
+            return None
+        if not isinstance(image, torch.Tensor):
+            image = torch.as_tensor(image, device=self.device)
+        image = image.to(self.device)
+        if image.ndim == 3:
+            image = image.unsqueeze(0)
+        if image.ndim != 4:
+            raise ValueError(
+                f"EmbodiChain camera {sensor_uid!r} must have shape [B,H,W,C], "
+                f"got {tuple(image.shape)}."
+            )
+        if image.shape[-1] == 4:
+            image = image[..., :3]
+        if image.shape[-1] != 3:
+            raise ValueError(
+                f"EmbodiChain camera {sensor_uid!r} must have RGB/RGBA channels, "
+                f"got {tuple(image.shape)}."
+            )
+        if image.is_floating_point():
+            if image.numel() > 0:
+                finite = bool(torch.isfinite(image).all().item())
+                min_value = float(image.amin().item())
+                max_value = float(image.amax().item())
+            else:
+                finite = True
+                min_value = 0.0
+                max_value = 0.0
+            if finite and min_value >= 0.0 and max_value <= 1.0:
+                image = image * 255.0
+            image = image.clamp(0.0, 255.0)
+        return image.to(dtype=torch.uint8)
+
+    def _wrap_obs(self, raw_obs: dict[str, Any]) -> dict[str, Any]:
+        if getattr(self, "_stack_cube", False):
+            return self.env.policy_observation(raw_obs)
         robot_obs = raw_obs["robot"]
         state_parts: list[torch.Tensor] = []
         for key in self.state_keys:
@@ -329,7 +591,50 @@ class EmbodiChainEnv(gym.Env):
             raise ValueError(
                 f"Failed to construct EmbodiChain state from keys {self.state_keys}."
             )
-        return {"states": torch.cat(state_parts, dim=-1)}
+        wrapped: dict[str, Any] = {"states": torch.cat(state_parts, dim=-1)}
+        # EmbodiChain policies may opt into a normalized episode phase input.
+        # Keep it separate from qpos so the default state contract remains
+        # backward compatible for existing recipes.
+        wrapped["episode_steps"] = self._elapsed_steps.clone()
+        task_descriptions = raw_obs.get("task_descriptions")
+        if task_descriptions is None:
+            task_descriptions = raw_obs.get("task_description")
+        if task_descriptions is None:
+            task_descriptions = getattr(
+                self,
+                "task_descriptions",
+                getattr(self, "task_prompt", ""),
+            )
+        wrapped["task_descriptions"] = _normalise_task_descriptions(
+            task_descriptions, self.num_envs
+        )
+        if self.main_camera_uid:
+            main_image = self._get_sensor_image(raw_obs, self.main_camera_uid)
+            if main_image is not None:
+                wrapped["main_images"] = main_image
+                if self.wrist_camera_uids:
+                    wrist_images = [
+                        self._get_sensor_image(raw_obs, sensor_uid)
+                        for sensor_uid in self.wrist_camera_uids
+                    ]
+                    if any(image is None for image in wrist_images):
+                        missing = [
+                            uid
+                            for uid, image in zip(
+                                self.wrist_camera_uids, wrist_images, strict=True
+                            )
+                            if image is None
+                        ]
+                        raise ValueError(
+                            "EmbodiChain wrist camera(s) missing from observations: "
+                            f"{missing}."
+                        )
+                    wrapped["extra_view_images"] = torch.stack(
+                        [image for image in wrist_images if image is not None], dim=1
+                    )
+                else:
+                    wrapped["extra_view_images"] = None
+        return wrapped
 
     def _wrap_info(self, infos: Any) -> dict[str, Any]:
         if infos is None:
@@ -346,6 +651,25 @@ class EmbodiChainEnv(gym.Env):
     ) -> tuple[dict[str, torch.Tensor], dict[str, Any]]:
         options = {} if options is None else dict(options)
         env_idx = options.pop("env_idx", None)
+        if self._stack_cube:
+            if self._stack_ppo:
+                return self._reset_stack_cube_ppo(env_idx, options)
+            if env_idx is not None and list(env_idx) != [0]:
+                raise ValueError(
+                    "Single-scene Stack Cube reset accepts only env_idx=[0]."
+                )
+            request = options.pop("request", None)
+            if request is None:
+                request = self._stack_requests[
+                    self._stack_request_index % len(self._stack_requests)
+                ]
+                self._stack_request_index += 1
+            raw_obs, infos = self.env.reset_request(
+                request, initial_state=options.pop("initial_state", None)
+            )
+            self._reset_metrics()
+            self._is_start = True
+            return self._wrap_obs(raw_obs), infos
         if env_idx is None:
             raw_obs, infos = self.env.reset(seed=seed)
             self._reset_metrics()
@@ -355,6 +679,38 @@ class EmbodiChainEnv(gym.Env):
             self._reset_metrics(reset_ids)
         self._is_start = True
         return self._wrap_obs(raw_obs), self._wrap_info(infos)
+
+    def _reset_stack_cube_ppo(self, env_idx, options):
+        """Reset synchronized scenes without advancing unrelated episodes."""
+        if env_idx is not None and list(env_idx) != list(range(self.num_envs)):
+            raise NotImplementedError(
+                "Stack Cube supports synchronized full-batch reset only; "
+                "partial reset would advance other scenes while clearing contacts."
+            )
+        requests = options.pop("requests", None)
+        initial_states = options.pop("initial_states", None)
+        if options:
+            raise ValueError(
+                f"Unsupported Stack Cube PPO reset options: {list(options)}"
+            )
+        if requests is None:
+            start = self._stack_request_index
+            requests = [
+                self._stack_requests[(start + row) % len(self._stack_requests)]
+                for row in range(self.num_envs)
+            ]
+            self._stack_request_index += self.num_envs * self.total_num_processes
+        raw_obs, infos = self.env.reset_requests(
+            requests, initial_states=initial_states
+        )
+        infos = dict(
+            infos,
+            reset_request_ids=[request["request_id"] for request in requests],
+            reset_request_seeds=[request["seed"] for request in requests],
+        )
+        self._reset_metrics()
+        self._is_start = True
+        return self._wrap_obs(raw_obs), infos
 
     def step(
         self, actions: Union[np.ndarray, torch.Tensor]
@@ -373,11 +729,81 @@ class EmbodiChainEnv(gym.Env):
         if action_tensor.ndim == 1:
             action_tensor = action_tensor.unsqueeze(0).repeat(self.num_envs, 1)
         action_tensor = action_tensor.reshape(self.num_envs, -1)
+        if not torch.isfinite(action_tensor).all():
+            raise ValueError("EmbodiChain actions must contain only finite values.")
+
+        if self._stack_cube:
+            if self._stack_ppo:
+                return self._step_stack_cube_ppo(action_tensor)
+            return self._step_stack_cube(action_tensor)
+
+        intervention_action = None
+        intervention_flag = None
+        if self.correction_enabled:
+            target = getattr(
+                getattr(self.env, "unwrapped", self.env),
+                "get_expert_correction_action",
+                None,
+            )
+            if target is None:
+                raise RuntimeError(
+                    "EmbodiChain correction is enabled, but the selected task "
+                    "does not expose get_expert_correction_action()."
+                )
+            corrected, intervention_flag = target(
+                action_tensor,
+                max_steps=self.correction_max_steps,
+                deviation_threshold=self.correction_deviation_threshold,
+                force_steps=self.correction_force_steps,
+            )
+            intervention_action = corrected.to(self.device, dtype=torch.float32)
+            intervention_flag = intervention_flag.to(self.device, dtype=torch.bool)
+            action_tensor = intervention_action
+            if not torch.isfinite(action_tensor).all():
+                raise ValueError(
+                    "EmbodiChain corrected actions must contain only finite values."
+                )
+
+        action_clipped = torch.zeros_like(action_tensor, dtype=torch.bool)
+        if self.clip_actions:
+            if action_tensor.shape[-1] != self.action_low.shape[-1]:
+                raise ValueError(
+                    "EmbodiChain clipping requires actions to match the Box bounds: "
+                    f"got {action_tensor.shape[-1]}, expected {self.action_low.shape[-1]}."
+                )
+            bounded_action = action_tensor.clamp(self.action_low, self.action_high)
+            action_clipped = bounded_action != action_tensor
+            action_tensor = bounded_action
+        applied_action = action_tensor.detach().clone()
+
+        if self.action_application_mode == "current_qpos":
+            # Diagnostic only: remove actuator target tracking lag by writing
+            # the policy command into the simulator's current qpos before the
+            # ordinary step writes the same command as its target qpos. The
+            # default target_position path remains the physically faithful
+            # controller used for data generation and smoke gates.
+            robot = getattr(self.env, "robot", None)
+            active_joint_ids = getattr(self.env, "active_joint_ids", None)
+            if robot is None or active_joint_ids is None:
+                raise RuntimeError(
+                    "action_application_mode='current_qpos' requires an "
+                    "EmbodiChain robot with active_joint_ids."
+                )
+            robot.set_qpos(
+                qpos=action_tensor,
+                joint_ids=active_joint_ids,
+                target=False,
+            )
 
         raw_obs, rewards, terminations, truncations, infos = self.env.step(
             action_tensor
         )
         infos = self._wrap_info(infos)
+        infos["applied_action"] = applied_action
+        infos["action_clipped"] = action_clipped
+        if intervention_action is not None and intervention_flag is not None:
+            infos["intervene_action"] = applied_action.clone()
+            infos["intervene_flag"] = intervention_flag
         self._elapsed_steps += 1
         infos = self._record_metrics(rewards, infos)
         if self.ignore_terminations:
@@ -401,6 +827,87 @@ class EmbodiChainEnv(gym.Env):
             truncations,
             infos,
         )
+
+    def _step_stack_cube(self, actions: torch.Tensor):
+        """Advance physical evaluation and preserve terminal observations."""
+        if int(self._elapsed_steps[0]) >= self.max_episode_steps:
+            raise RuntimeError("Reset Stack Cube after its terminal transition.")
+        raw_obs, rewards, terminations, truncations, step_info = self.env.step_relative(
+            actions
+        )
+        metrics = step_info["metrics"]["stack_metrics"]
+        success = step_info["metrics"]["stable_success"]
+        self._elapsed_steps += 1
+        infos = self._record_metrics(
+            rewards,
+            {
+                "success": success,
+                "stack_metrics": metrics,
+                "rewards": step_info["rewards"],
+            },
+        )
+        infos["episode"]["success_at_end"] = success.clone()
+        infos["applied_action"] = actions.clone()
+        observation = self._wrap_obs(raw_obs)
+        if truncations.any() and self.auto_reset:
+            final_info = _clone_nested(infos)
+            final_obs = _clone_nested(observation)
+            observation, _ = self.reset()
+            infos.update(
+                final_info=final_info,
+                final_observation=final_obs,
+                _final_info=truncations.clone(),
+                _final_observation=truncations.clone(),
+            )
+        self._is_start = False
+        return observation, rewards, terminations, truncations, infos
+
+    def _step_stack_cube_ppo(self, actions: torch.Tensor):
+        """Return first-episode PPO transitions and independent stability scores.
+
+        Training retains the first physical success/drop transition, gives no
+        later rewards, and resets all scenes at the rollout boundary. Unlike
+        IsaacLab's native auto-reset, later actions never enter a new episode
+        under the old chunk. The actor masks chunks after the first done.
+        Evaluation ignores success/drop termination and measures the full
+        fixed-duration trajectory, including any subsequent collapse.
+        """
+        if (self._elapsed_steps >= self.max_episode_steps).any():
+            raise RuntimeError("Reset Stack Cube after its terminal transition.")
+        raw_obs, rewards, terminations, truncations, step_info = self.env.step_relative(
+            actions
+        )
+        metrics = step_info["metrics"]["stack_metrics"]
+        stable = step_info["metrics"]["stable_success"]
+        self._elapsed_steps += 1
+        baseline = metrics["baseline_success"]
+        infos = self._record_metrics(
+            rewards,
+            {
+                "success": stable,
+                "fail": metrics["failure"],
+                "stack_metrics": metrics,
+                "rewards": step_info["rewards"],
+            },
+        )
+        infos["episode"]["success_at_end"] = stable.clone()
+        infos["episode"]["baseline_success_at_end"] = baseline.clone()
+        infos["applied_action"] = actions.clone()
+        observation = self._wrap_obs(raw_obs)
+        dones = terminations | truncations
+        if dones.any():
+            infos.update(
+                final_info=_clone_nested(infos),
+                final_observation=_clone_nested(observation),
+                _final_info=dones.clone(),
+                _final_observation=dones.clone(),
+            )
+            if self.auto_reset:
+                if not dones.all():
+                    raise RuntimeError("Stack Cube cannot auto-reset a partial batch.")
+                observation, _ = self.reset()
+        self._is_start = False
+        return observation, rewards, terminations, truncations, infos
 
     def chunk_step(self, chunk_actions: Union[np.ndarray, torch.Tensor]):
         chunk_actions = (
@@ -432,7 +939,7 @@ class EmbodiChainEnv(gym.Env):
             raw_terms.append(terminations)
             raw_truncs.append(truncations)
             step_dones = torch.logical_or(terminations, truncations)
-            if step_dones.any() and self.auto_reset:
+            if step_dones.any() and (self.auto_reset or self._stack_ppo):
                 aggregated_final_info = _masked_update(
                     aggregated_final_info,
                     infos.get("final_info", infos),
@@ -452,7 +959,7 @@ class EmbodiChainEnv(gym.Env):
         past_truncations = raw_truncs_t.any(dim=1)
         past_dones = torch.logical_or(past_terminations, past_truncations)
 
-        if past_dones.any() and self.auto_reset:
+        if past_dones.any() and (self.auto_reset or self._stack_ppo):
             infos_list[-1] = dict(infos_list[-1])
             infos_list[-1]["final_info"] = (
                 aggregated_final_info
@@ -468,10 +975,14 @@ class EmbodiChainEnv(gym.Env):
             infos_list[-1]["_final_observation"] = past_dones
             infos_list[-1]["_elapsed_steps"] = past_dones
 
-        chunk_terminations = torch.zeros_like(raw_terms_t)
-        chunk_terminations[:, -1] = past_terminations
-        chunk_truncations = torch.zeros_like(raw_truncs_t)
-        chunk_truncations[:, -1] = past_truncations
+        if self._stack_ppo and not self.auto_reset and not self.ignore_terminations:
+            chunk_terminations = raw_terms_t
+            chunk_truncations = raw_truncs_t
+        else:
+            chunk_terminations = torch.zeros_like(raw_terms_t)
+            chunk_terminations[:, -1] = past_terminations
+            chunk_truncations = torch.zeros_like(raw_truncs_t)
+            chunk_truncations[:, -1] = past_truncations
 
         return (
             obs_list,
@@ -482,6 +993,13 @@ class EmbodiChainEnv(gym.Env):
         )
 
     def update_reset_state_ids(self):
+        if self._stack_cube:
+            if not self._stack_ppo or _cfg_get(
+                self.cfg, "use_fixed_reset_state_ids", False
+            ):
+                self._stack_request_index = (
+                    self.seed_offset * self.num_envs if self._stack_ppo else 0
+                )
         return None
 
     def sample_action_space(self) -> torch.Tensor:
@@ -491,6 +1009,17 @@ class EmbodiChainEnv(gym.Env):
 
     def close(self):
         try:
-            self.env.close()
+            # EmbodiChain's default ``close`` exits the process after tearing
+            # down the simulator.  RLinf owns the surrounding process, so
+            # release simulator resources without terminating the evaluator
+            # or Ray worker.
+            self.env.close(exit_process=False)
+        except TypeError:
+            # Keep compatibility with older EmbodiChain releases whose close
+            # method did not expose the ``exit_process`` keyword.
+            try:
+                self.env.close()
+            except Exception:
+                pass
         except Exception:
             pass
