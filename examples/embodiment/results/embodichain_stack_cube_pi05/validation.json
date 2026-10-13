@@ -352,5 +352,115 @@
       "doc_symbols_passed_with_verified_literals": true,
       "source_hashes_match_current_files": true
     }
+  },
+  "native_reward_PR_base_integration": {
+    "merge_commit": "a4bba78baa2c05f677769ea9e35e37faed34dabc",
+    "merged_base_commit": "9b52a9831d1c0febd4615de3e75ca17f281cf963",
+    "tests": {
+      "suites": {
+        "post_merge_model_data.xml": {
+          "passed": 63,
+          "skipped": 0,
+          "failed": 0
+        },
+        "post_merge_model_fsdp.xml": {
+          "passed": 0,
+          "skipped": 0,
+          "failed": 0
+        },
+        "post_merge_model_models.xml": {
+          "passed": 23,
+          "skipped": 2,
+          "failed": 0
+        },
+        "post_merge_model_real_env.xml": {
+          "passed": 15,
+          "skipped": 25,
+          "failed": 0
+        },
+        "post_merge_model_worker.xml": {
+          "passed": 31,
+          "skipped": 0,
+          "failed": 0
+        },
+        "post_merge_sdk.xml": {
+          "passed": 39,
+          "skipped": 0,
+          "failed": 0
+        }
+      },
+      "model_passed": 132,
+      "model_skipped": 27,
+      "sdk_passed": 39,
+      "distinct_passed": 157,
+      "remaining_skips": [
+        [
+          "test_models",
+          "test_openpi_eval_sft_image_crop_is_exact_and_preserves_inference_state[cuda-False]"
+        ],
+        [
+          "test_models",
+          "test_openpi_eval_sft_image_crop_is_exact_and_preserves_inference_state[cuda-True]"
+        ]
+      ]
+    },
+    "model_test_execution": "One pytest process per file, selector openpi or embodichain or stack_cube; data also selected memory_checkpoint or auto_save_checkpoint. FSDP selector matched no cases.",
+    "SDK_test_selector": "tests/unit_tests/test_real_env.py -k stack_cube or embodichain",
+    "native_simulation_source_unchanged": true,
+    "precommit_all_files": "passed",
+    "docs": {
+      "en_warnings": 0,
+      "zh_warnings": 0,
+      "markup_passed": true,
+      "symbols_passed_with_verified_literals": true
+    },
+    "install": {
+      "shell_syntax": "passed",
+      "model_dependency_check": "passed",
+      "SDK_dependency_check": "passed",
+      "default_and_pinned_SDK_argument_checks": "passed",
+      "advisory_candidates_before": 48,
+      "advisory_candidates_after": 49,
+      "additional_advisory_reason": "Base branch mirror URL rewrite is a static-check false positive; the SDK clone remains pinned by fetch and detached checkout."
+    },
+    "wheel": {
+      "wheel_sha256": "f13b23b4fc634dc80e6cbd7abefd93b54c5f03e29a9f6d505ecb27e9ca9efb13",
+      "build_source_tree": "26dcaa96a70a0ac0d9e8f1da70094be3c750fb72",
+      "clean_source_archive_build": true,
+      "yaml_resources": [
+        "rlinf/envs/sim/embodichain/configs/components/embodiments/isaaclab_panda.yaml",
+        "rlinf/envs/sim/embodichain/configs/components/execution_policies/stack_cube.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/env.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task.panda.formal_expert.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task.panda.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task_program/integration.formal_expert.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task_program/integration.yaml",
+        "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task_program/program.yaml"
+      ],
+      "native_success_term_packaged": true,
+      "obsolete_reward_presets_absent": true,
+      "superseded_tasks_absent": true
+    },
+    "training_rerun": false,
+    "log_sha256": {
+      "post_merge_clean_wheel.log": "05be20aac0603b7a4e31a80068b4a75bf9cce9d9ba2de229f170fa785b7cca8a",
+      "post_merge_docs.log": "ab561c0a6eef38fa941e701532d406eda0f3870bece99da3f82e2fa81f28fca1",
+      "post_merge_model_data.log": "e0599d6824c5535a99e031e3181f57cbc0ae060cb47a120b0dc08f623caab600",
+      "post_merge_model_data.xml": "574b42d583a8c08ed4c431e1317e2eebb0b2cef139dbdbfee7d9c86e29c62383",
+      "post_merge_model_fsdp.log": "4c1b512e06dd7881ab27e03da56900627d8f738021ec5cfc2d0d0a8ea871451b",
+      "post_merge_model_fsdp.xml": "5927b609ad4f5533613a485ab9374847245d3a923206d6a27cf2856744aa8eb3",
+      "post_merge_model_models.log": "2e5d906789a9822ae81dc3964ff44a253101b1e879d90e0a9b8863b07ffece19",
+      "post_merge_model_models.xml": "253a46ad7d027c23c77907f1a39a92919153828d9f53c7fd0aad0149ccc66b60",
+      "post_merge_model_real_env.log": "9df9c2df46072f096238b6cfdcfdd0af354e7b5392f84a211e0eeade65fe8edf",
+      "post_merge_model_real_env.xml": "1c6459162d8a79936b5045145088db1e7a56752db8eb2c96e3208670eaf1d3ea",
+      "post_merge_model_worker.log": "c463280606ac088b3fed51f06da52f85e4a3e951b7948e252e9a768958ed6309",
+      "post_merge_model_worker.xml": "60232ce5de080ea54374f0fc7e72b42fb8bf09b2bc064b8cc6d6c5f460c60cf1",
+      "post_merge_precommit.log": "716d0ad0e8aad25596efd61134aa4d2a27c1ac5dbf1e85d120c05dc20de21384",
+      "post_merge_sdk.log": "aca47282c40c2d99a8b50509210c581ab4bfb92fc6ab5a30f5d3cb9342a38f52",
+      "post_merge_sdk.xml": "cc4869db29442ef4b2a4e675799a2748d5b920fc12d570995a419058e5bae99e",
+      "post_merge_test_summary.json": "94cf54856a34fc3499bebed94c8d8e1f93720f1a488d82e3763549b368df920b",
+      "post_merge_wheel.log": "876ab7a0735f71a1b9e474cc7b8a137ad3321f0b5a0a070e17e352aaa43b7a4b",
+      "post_merge_wheel_validation.json": "ed366dae3e0ab335b7e2c8286b41fb7400d5f6bd3890257b7969699111adfd99"
+    }
   }
 }
