@@ -12,27 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Batched Stack Cube scoring and stateless reward terms."""
-
-from typing import Any
+"""Batched Stack Cube physical measurements."""
 
 import torch
-
-
-def stack_cube_success_reward(
-    env: Any,
-    obs: Any,
-    action: Any,
-    info: dict[str, Any],
-    success_key: str = "baseline_success",
-) -> torch.Tensor:
-    """Return configured success scores for the adapter's active episodes.
-
-    The adapter supplies physical success or consecutive-step stability in
-    ``info`` and owns the first-termination mask. EmbodiChain RewardManager
-    applies the configured weight and combines the resulting reward terms.
-    """
-    return info[success_key].float() * info["reward_active"]
 
 
 def stack_cube_metrics(

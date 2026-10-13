@@ -3,8 +3,7 @@ env_type: embodichain
 gym_config_path: rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task.panda.yaml
 panda_urdf: ${oc.env:STACK_CUBE_PANDA_URDF}
 request_manifest: ${oc.env:STACK_CUBE_PPO_TRAIN_REQUESTS}
-stack_cube_reward: isaaclab
-reward_config_path: rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/rewards.yaml
+stack_cube_protocol: isaaclab
 
 headless: true
 sim_device: cuda

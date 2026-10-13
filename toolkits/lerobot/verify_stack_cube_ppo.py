@@ -74,7 +74,7 @@ def simulator_probe(args) -> dict:
             "panda_urdf": str(args.panda_urdf.resolve()),
             "request_manifest": str(manifest),
             "sim_device": "cuda:0",
-            "stack_cube_reward": "isaaclab",
+            "stack_cube_protocol": "isaaclab",
             "auto_reset": False,
             "ignore_terminations": True,
             "max_episode_steps": 450,
@@ -84,6 +84,9 @@ def simulator_probe(args) -> dict:
     environments = []
     snapshots = []
     snapshot_steps = []
+    reward_trace = []
+    position_trace = []
+    finger_trace = []
     started = time.monotonic()
     free_before, total_memory = torch.cuda.mem_get_info()
     minimum_free = free_before
@@ -151,6 +154,21 @@ def simulator_probe(args) -> dict:
         snapshot_steps.append(0)
         for step in range(steps):
             obs, reward, term, trunc, info = runtime.step(actions[:, step])
+            measured = info["stack_metrics"]
+            torch.testing.assert_close(
+                reward, measured["baseline_success"].float(), rtol=0, atol=0
+            )
+            torch.testing.assert_close(
+                reward, info["rewards"]["success"], rtol=0, atol=0
+            )
+            reward_trace.append(reward.cpu().numpy().copy())
+            position_trace.append(measured["positions"].cpu().numpy().copy())
+            finger_trace.append(
+                runtime.env.robot.get_qpos()[:, runtime.env.hand_ids]
+                .cpu()
+                .numpy()
+                .copy()
+            )
             assert not term.any()
             assert (trunc == (step + 1 == 450)).all()
             if step + 1 in {50, 150, 250, steps}:
@@ -163,6 +181,12 @@ def simulator_probe(args) -> dict:
                     }
                 )
                 snapshot_steps.append(step + 1)
+        np.savez_compressed(
+            args.output / "reward_trace.npz",
+            rewards=np.stack(reward_trace),
+            positions=np.stack(position_trace),
+            fingers=np.stack(finger_trace),
+        )
         np.savez_compressed(
             args.output / "observations.npz",
             **{
@@ -214,6 +238,8 @@ def simulator_probe(args) -> dict:
             "distinct_validation_requests": len({r["seed"] for r in cohort}),
             "replicated_validation_rows": args.num_envs > len(requests),
             "steps": steps,
+            "native_reward_matches_baseline": True,
+            "episode_returns": np.stack(reward_trace).sum(axis=0).tolist(),
             "stable_at_end": info["episode"]["success_at_end"].cpu().tolist(),
             "metrics": metrics,
             "second_simulator_unchanged": second_unchanged,

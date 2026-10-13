@@ -46,14 +46,33 @@ class StackCubeExpertEnv(EmbodiedEnv):
     substep. Only actuator targets are written during execution.
     """
 
-    def __init__(self, cfg: EmbodiedEnvCfg, **kwargs: Any) -> None:
+    def __init__(
+        self, cfg: EmbodiedEnvCfg, *, protocol: str | None = None, **kwargs: Any
+    ) -> None:
         self._eef_target = None
         self.last_relative_action = None
         self._relative_command = None
+        self._stack_protocol = protocol
+        self._stack_task_state = None
         super().__init__(cfg, **kwargs)
         self.arm_ids = self.robot.get_joint_ids("arm")
         self.hand_ids = self.robot.get_joint_ids("hand")
         self.sim.set_ground_plane_visibility(False)
+        if protocol is not None:
+            self._reset_stack_task_state()
+
+    def _reset_stack_task_state(self) -> None:
+        self._stack_stable_steps = torch.zeros(
+            self.num_envs, dtype=torch.long, device=self.device
+        )
+        self._stack_terminated = torch.zeros(
+            self.num_envs, dtype=torch.bool, device=self.device
+        )
+        self._stack_task_state = (
+            torch.zeros_like(self._stack_terminated),
+            torch.zeros_like(self._stack_terminated),
+            {},
+        )
 
     def reset(self, *args: Any, **kwargs: Any) -> tuple[EnvObs, dict[str, Any]]:
         """Reset the physical scene and discard the previous control target."""
@@ -66,7 +85,54 @@ class StackCubeExpertEnv(EmbodiedEnv):
         self._eef_target = None
         self.last_relative_action = None
         self._relative_command = None
+        if self._stack_task_state is not None:
+            self._reset_stack_task_state()
         return super().reset(*args, **kwargs)
+
+    def _update_sim_state(self, **kwargs: Any) -> None:
+        super()._update_sim_state(**kwargs)
+        if self._stack_task_state is None:
+            return
+        metrics = (
+            self.batch_stack_metrics()
+            if self._stack_protocol == "isaaclab"
+            else self.stack_metrics()
+        )
+        stable_frame = torch.as_tensor(
+            metrics["stable_frame"], device=self.device, dtype=torch.bool
+        ).reshape(self.num_envs)
+        self._stack_stable_steps = torch.where(
+            stable_frame, self._stack_stable_steps + 1, 0
+        )
+        stable = self._stack_stable_steps >= 20
+        if self._stack_protocol == "isaaclab":
+            active = ~self._stack_terminated
+            success = metrics["baseline_success"] & active
+            fail = metrics["failure"] & active
+            if not self.cfg.ignore_terminations:
+                self._stack_terminated |= success | fail
+        else:
+            success = stable
+            fail = torch.zeros_like(success)
+        self._stack_task_state = (
+            success,
+            fail,
+            {"stack_metrics": metrics, "stable_success": stable},
+        )
+
+    def compute_task_state(
+        self, **kwargs: Any
+    ) -> tuple[torch.Tensor, torch.Tensor, dict[str, Any]]:
+        """Return measured success, failure, and stability for the native step.
+
+        State advances once after physics. Repeated info reads do not advance
+        the twenty-step dwell. PPO reports the first success/drop transition;
+        full-duration evaluation keeps physical stability as a separate metric.
+        Expert collection retains the common Task Program completion behavior.
+        """
+        if self._stack_task_state is None:
+            return super().compute_task_state(**kwargs)
+        return self._stack_task_state
 
     def reset_request(
         self, request: dict[str, Any], *, initial_state: dict[str, Any] | None = None
@@ -403,29 +469,18 @@ def evaluate_stack(
     angular: list[float],
 ) -> dict:
     """Score blue/red/green positions and physical motion without runtime state."""
-    offsets = positions[1:] - positions[:-1]
-    xy = offsets[:, :2].norm(dim=-1)
-    height_error = (offsets[:, 2] - 0.0468).abs()
-    released = bool(torch.all(torch.abs(fingers - 0.04) < 0.000104))
-    layers = (xy < 0.04) & (offsets[:, 2] > 0) & (offsets[:, 2] - 0.0468 < 0.005)
-    baseline = bool(layers.all()) and released
-    # Physical qualification also rejects interpenetrating/tilted arrangements.
-    stable_frame = (
-        baseline
-        and bool((height_error < 0.005).all())
-        and max(linear) <= 0.02
-        and max(angular) <= 0.5
+    from rlinf.envs.sim.embodichain.stack_cube_metrics import stack_cube_metrics
+
+    metrics = stack_cube_metrics(
+        positions.unsqueeze(0),
+        fingers.unsqueeze(0),
+        positions.new_tensor([linear]),
+        positions.new_tensor([angular]),
     )
     return {
-        "positions": positions.cpu().tolist(),
-        "xy_errors": xy.cpu().tolist(),
-        "height_errors": height_error.cpu().tolist(),
-        "layers": layers.cpu().tolist(),
-        "released": released,
-        "linear_speeds": linear,
-        "angular_speeds": angular,
-        "baseline_success": baseline,
-        "stable_frame": stable_frame,
+        key: value[0].cpu().tolist()
+        for key, value in metrics.items()
+        if key != "failure"
     }
 
 
@@ -441,11 +496,18 @@ def build_stack_cube_env(
     device: str = "cuda:0",
     max_episode_steps: int = 450,
     num_envs: int = 1,
+    protocol: str | None = None,
+    gym_config_path: str | Path | None = None,
+    ignore_terminations: bool = False,
 ) -> StackCubeExpertEnv:
     """Build scenes with the verified controller and prepared Panda asset.
 
     The caller owns simulator destruction. The asset must contain the control
     TCP and independently actuated finger joints used by expert collection.
+    ``protocol`` selects baseline PPO success or stable evaluation success.
+    ``gym_config_path`` selects a native task deployment, including its reward
+    terms. EmbodiChain owns reward computation and manager reset. Leaving
+    ``protocol`` unset preserves expert collection without policy episode scoring.
     """
     from embodichain.lab.gym.utils.gym_utils import config_to_cfg, get_manager_modules
     from embodichain.lab.gym.utils.registration import (
@@ -454,6 +516,9 @@ def build_stack_cube_env(
         get_env_spec,
     )
     from embodichain.utils.utility import load_config
+
+    if protocol not in {None, "isaaclab", "evaluation"}:
+        raise ValueError("Stack Cube protocol must be isaaclab or evaluation.")
 
     asset = Path(panda_urdf).resolve(strict=True)
     robot_xml = ET.parse(asset).getroot()
@@ -467,7 +532,10 @@ def build_stack_cube_env(
             )
     torch.set_float32_matmul_precision("highest")
     task = (
-        Path(__file__).parent / "configs/tasks/manipulation/stack_cube/task.panda.yaml"
+        Path(gym_config_path).expanduser().resolve(strict=True)
+        if gym_config_path is not None
+        else Path(__file__).parent
+        / "configs/tasks/manipulation/stack_cube/task.panda.yaml"
     )
     discover_task_packages()
     execute_init_hooks()
@@ -485,7 +553,11 @@ def build_stack_cube_env(
     cfg.sim_cfg.gpu_id = 0
     cfg.filter_dataset_saving = True
     cfg.seed = seed
+    if protocol is not None:
+        cfg.ignore_terminations = protocol == "evaluation" or ignore_terminations
     factory = get_env_spec(raw["id"]).task_program_adapter_factory
-    env = StackCubeExpertEnv(cfg, task_program_adapter_factory=factory)
+    env = StackCubeExpertEnv(
+        cfg, protocol=protocol, task_program_adapter_factory=factory
+    )
     env._replay_no_auto_reset = True
     return env

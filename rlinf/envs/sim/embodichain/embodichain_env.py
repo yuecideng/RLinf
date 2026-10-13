@@ -301,8 +301,6 @@ class EmbodiChainEnv(gym.Env):
         self._stack_ppo = False
         self._stack_requests = []
         self._stack_request_index = 0
-        self._stack_stable_steps = 0
-        self.reward_manager = None
         self.env = self._build_env()
         if not self.auto_reset:
             # EmbodiChain performs its own reset after terminal transitions.
@@ -375,8 +373,6 @@ class EmbodiChainEnv(gym.Env):
             self.fail_once.zero_()
             self.returns.zero_()
             self._elapsed_steps.zero_()
-            if self.reward_manager is not None:
-                self.reward_manager.reset()
             return
 
         env_idx = torch.as_tensor(env_idx, dtype=torch.long, device=self.device)
@@ -440,10 +436,10 @@ class EmbodiChainEnv(gym.Env):
         if gym_config["id"] == "RLinf-StackCube-Expert-v1":
             from rlinf.envs.sim.embodichain.stack_cube import build_stack_cube_env
 
-            reward_mode = _cfg_get(self.cfg, "stack_cube_reward", "evaluation")
-            if reward_mode not in {"evaluation", "isaaclab"}:
-                raise ValueError("Stack Cube reward must be evaluation or isaaclab.")
-            self._stack_ppo = reward_mode == "isaaclab"
+            protocol = _cfg_get(self.cfg, "stack_cube_protocol", "evaluation")
+            if protocol not in {"evaluation", "isaaclab"}:
+                raise ValueError("Stack Cube protocol must be evaluation or isaaclab.")
+            self._stack_ppo = protocol == "isaaclab"
             if self.num_envs != 1 and not self._stack_ppo:
                 raise ValueError(
                     "Stack Cube frozen-manifest evaluation requires num_envs=1."
@@ -475,36 +471,16 @@ class EmbodiChainEnv(gym.Env):
                 self._stack_request_index = self.seed_offset * self.num_envs
             self._stack_cube = True
             self.task_prompt = "Stack the red block on the blue block, then stack the green block on the red block"
-            from embodichain.lab.gym.envs.managers import RewardCfg, RewardManager
-            from omegaconf import OmegaConf
-
-            reward_path = _resolve_gym_config_path(
-                str(
-                    _cfg_get(
-                        self.cfg,
-                        "reward_config_path",
-                        Path(__file__).parent
-                        / "configs/tasks/manipulation/stack_cube/rewards.yaml",
-                    )
-                )
-            )
-            presets = OmegaConf.to_container(OmegaConf.load(reward_path), resolve=True)
-            preset = "isaaclab" if self._stack_ppo else "evaluation"
-            reward_cfg = {
-                name: RewardCfg(**term) for name, term in presets[preset].items()
-            }
             env = build_stack_cube_env(
                 _cfg_get(self.cfg, "panda_urdf"),
                 seed=self.seed,
                 device=str(self.device),
                 max_episode_steps=self.max_episode_steps,
                 num_envs=self.num_envs,
+                protocol=protocol,
+                gym_config_path=gym_config_path,
+                ignore_terminations=self.ignore_terminations,
             )
-            try:
-                self.reward_manager = RewardManager(reward_cfg, env)
-            except Exception:
-                env.close(exit_process=False)
-                raise
             env.action_space = gym.spaces.Box(
                 -np.inf, np.inf, shape=(7,), dtype=np.float32
             )
@@ -692,7 +668,6 @@ class EmbodiChainEnv(gym.Env):
                 request, initial_state=options.pop("initial_state", None)
             )
             self._reset_metrics()
-            self._stack_stable_steps = 0
             self._is_start = True
             return self._wrap_obs(raw_obs), infos
         if env_idx is None:
@@ -734,12 +709,6 @@ class EmbodiChainEnv(gym.Env):
             reset_request_seeds=[request["seed"] for request in requests],
         )
         self._reset_metrics()
-        self._stack_stable_steps = torch.zeros(
-            self.num_envs, dtype=torch.long, device=self.device
-        )
-        self._stack_terminated = torch.zeros(
-            self.num_envs, dtype=torch.bool, device=self.device
-        )
         self._is_start = True
         return self._wrap_obs(raw_obs), infos
 
@@ -863,23 +832,19 @@ class EmbodiChainEnv(gym.Env):
         """Advance physical evaluation and preserve terminal observations."""
         if int(self._elapsed_steps[0]) >= self.max_episode_steps:
             raise RuntimeError("Reset Stack Cube after its terminal transition.")
-        raw_obs, _, _, _, _ = self.env.step_relative(actions)
-        metrics = self.env.stack_metrics()
+        raw_obs, rewards, terminations, truncations, step_info = self.env.step_relative(
+            actions
+        )
+        metrics = step_info["metrics"]["stack_metrics"]
+        success = step_info["metrics"]["stable_success"]
         self._elapsed_steps += 1
-        self._stack_stable_steps = (
-            self._stack_stable_steps + 1 if metrics["stable_frame"] else 0
-        )
-        success = torch.tensor([self._stack_stable_steps >= 20], device=self.device)
-        terminations = torch.zeros_like(success)
-        truncations = self._elapsed_steps >= self.max_episode_steps
-        rewards, reward_terms = self.reward_manager.compute(
-            obs=raw_obs,
-            action=actions,
-            info={"success": success, "reward_active": torch.ones_like(success)},
-        )
         infos = self._record_metrics(
             rewards,
-            {"success": success, "stack_metrics": metrics, "rewards": reward_terms},
+            {
+                "success": success,
+                "stack_metrics": metrics,
+                "rewards": step_info["rewards"],
+            },
         )
         infos["episode"]["success_at_end"] = success.clone()
         infos["applied_action"] = actions.clone()
@@ -909,32 +874,20 @@ class EmbodiChainEnv(gym.Env):
         """
         if (self._elapsed_steps >= self.max_episode_steps).any():
             raise RuntimeError("Reset Stack Cube after its terminal transition.")
-        raw_obs, _, _, _, _ = self.env.step_relative(actions)
-        metrics = self.env.batch_stack_metrics()
+        raw_obs, rewards, terminations, truncations, step_info = self.env.step_relative(
+            actions
+        )
+        metrics = step_info["metrics"]["stack_metrics"]
+        stable = step_info["metrics"]["stable_success"]
         self._elapsed_steps += 1
-        self._stack_stable_steps = torch.where(
-            metrics["stable_frame"], self._stack_stable_steps + 1, 0
-        )
         baseline = metrics["baseline_success"]
-        stable = self._stack_stable_steps >= 20
-        active = ~self._stack_terminated
-        rewards, reward_terms = self.reward_manager.compute(
-            obs=raw_obs,
-            action=actions,
-            info={"baseline_success": baseline, "reward_active": active},
-        )
-        terminations = (baseline | metrics["failure"]) & active
-        if self.ignore_terminations:
-            terminations = torch.zeros_like(terminations)
-        self._stack_terminated |= terminations
-        truncations = self._elapsed_steps >= self.max_episode_steps
         infos = self._record_metrics(
             rewards,
             {
                 "success": stable,
                 "fail": metrics["failure"],
                 "stack_metrics": metrics,
-                "rewards": reward_terms,
+                "rewards": step_info["rewards"],
             },
         )
         infos["episode"]["success_at_end"] = stable.clone()

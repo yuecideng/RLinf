@@ -266,5 +266,91 @@
       "trace_tests.log": "73c7f96972979cd5dd4e0a6fc253461d633226cdee3d3d1e57c24b1aa51e517b",
       "trace_tests.xml": "0e794005a4bd56210d2abd2c0d15f706b636ddffe3ac3c41ab9f7307c0091aff"
     }
+  },
+  "native_reward_pipeline_migration": {
+    "checked_utc": "2026-10-13T12:40:51.925353+00:00",
+    "parent_commit": "012398dddf1a732b0ee6cbf2b7caadfcb31d6055",
+    "scope": "Native SDK step with scripted physics; focused Stack Cube and EmbodiChain CPU contracts only.",
+    "sdk_changes_required": false,
+    "sdk_commit": "21531b77c1deb5856a5aa11e3a3d8c6cbbeed9d3",
+    "reward_functor": "embodichain.lab.gym.envs.managers.rewards.success_reward",
+    "reward_owner": "EmbodiChain EmbodiedEnv.step/_extend_reward and its native RewardManager",
+    "task_state_owner": "StackCubeExpertEnv.compute_task_state, updated once after physics",
+    "adapter_reward_computation": false,
+    "SDK_tests": {
+      "tests": 41,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": 41
+    },
+    "trace_cases": 14,
+    "scalar_rewards_compared": 74700,
+    "tolerance": {
+      "rtol": 0,
+      "atol": 0
+    },
+    "existing_transition_fields_equal": true,
+    "trace_parity_report": "native_reward_parity.json",
+    "native_reward_pass_through_verified": true,
+    "repeated_info_reads_preserve_dwell_verified": true,
+    "GPU_jobs_launched": false,
+    "training_rerun": false,
+    "log_sha256": {
+      "SDK_tests.xml": "f6efcc99bdbaa682a50964060b6864f20cd700d5a0eafe1511604a301c82e311",
+      "trace_tests.log": "349107990477091f56aa33a98626193b644b3b396df1379eefa1bdf64088ee63",
+      "trace_tests.xml": "501266eb2a7cb5af3ba3c64cded5441b2d5ca40d9af841f8195c82a95cb0f8b1",
+      "docs_check.log": "ab561c0a6eef38fa941e701532d406eda0f3870bece99da3f82e2fa81f28fca1",
+      "docs_symbols.log": "47c83cdd1dc6cd097a766329f2378a054f2324946263c09417ff2d95389b0ce5",
+      "docs-en.log": "e7a70f344f521fcfb655e11dc6a6a5fda08f80e56c0c6a7ce5ce70337430ffb8",
+      "docs-zh.log": "952d60ca57a4800501b86c3b17b510cd48d4033c5e3e1e715be349b7d1629254",
+      "precommit.log": "716d0ad0e8aad25596efd61134aa4d2a27c1ac5dbf1e85d120c05dc20de21384"
+    },
+    "docs": {
+      "en_content_warnings": 0,
+      "zh_content_warnings": 0,
+      "mode": "Project docs-check helper with its default docs-only autodoc import filter.",
+      "strict_attempt": {
+        "en_exit_code": 1,
+        "zh_exit_code": 1,
+        "autodoc_import_warnings_per_language": 40,
+        "reason": "Docs-only interpreter cannot import RLinf autodoc targets; no content warnings."
+      },
+      "inline_markup_passed": true,
+      "symbols_passed_with_existing_verified_literals": true
+    },
+    "precommit_changed_files": "passed"
+  },
+  "native_gym_reward_alignment": {
+    "report": "isaaclab_reward_alignment.json",
+    "configuration": "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/env.yaml",
+    "episode_protocol_key": "stack_cube_protocol",
+    "reward_term": "success",
+    "adapter_reward_computation": false,
+    "adapter_reward_configuration_parser": false,
+    "unit_tests": {
+      "tests": 39,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "GPU_expert_replay": {
+      "scenes": 8,
+      "control_steps": 380,
+      "stable_at_end": 8
+    },
+    "scalar_rewards_compared": 4095,
+    "maximum_absolute_error": 0.0,
+    "isaaclab_runtime_launched": false,
+    "isaaclab_validation": "source-level; pending NVIDIA EULA confirmation prevents full runtime launch",
+    "training_rerun": false,
+    "checks": {
+      "precommit_passed": true,
+      "en_sphinx_warnings": 0,
+      "zh_sphinx_warnings": 0,
+      "rst_markup_passed": true,
+      "doc_symbols_passed_with_verified_literals": true,
+      "source_hashes_match_current_files": true
+    }
   }
 }

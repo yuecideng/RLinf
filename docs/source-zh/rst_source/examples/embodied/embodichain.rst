@@ -472,25 +472,27 @@ SFT 验证通过后准备 PPO
 
 选定的 SFT checkpoint 达到固定闭环门槛后，再启动 PPO：局部 validation 至少成功 4/8，独立局部 test 至少成功 8/16，随后每个 seed 的正式 validation 至少成功 6/27。成功要求在 450 步评估的最后 20 个控制步中，两层堆叠均保持稳定且夹爪已经释放。训练前还需验证批量仿真、reward、权重同步和 checkpoint 恢复；CPU contract 测试不能代替 GPU 可行性验证。
 
-Stack Cube 环境通过 ``stack_cube_reward: isaaclab`` 显式选择 PPO reward。在 20 Hz 控制频率下，基准堆叠成功的每一步获得 reward 1，对齐参考任务的权重 20 乘以 0.05 s 控制周期。任一积木掉到 z=-0.05 m 以下时，episode 结束。稳定完成独立计分，不替换参考 reward 判据。
+Stack Cube 环境通过 ``stack_cube_protocol: isaaclab`` 选择 episode 规则。在 20 Hz 控制频率下，基准堆叠成功的每一步获得 reward 1，对齐参考任务的权重 20 乘以 0.05 s 控制周期。任一积木掉到 z=-0.05 m 以下时，episode 结束。稳定完成独立计分，不替换参考 reward 判据。
 
-Adapter 使用 EmbodiChain 的 ``RewardManager`` 合成 reward term，配置由 ``reward_config_path`` 指定。内置 ``rewards.yaml`` 提供两套 ``RewardCfg`` preset：``isaaclab`` 按基准堆叠成功计分，``evaluation`` 按连续 20 步稳定计分。连续步数和 episode 活跃状态由 adapter 管理，因此 manager 接收的判据和 mask 与原实现一致。各 term 的值通过 ``info["rewards"]`` 返回。SDK Reward Manager 直接应用权重；默认权重已经是每个控制步 1，不能再次乘以控制周期。
+在原生 Gym 环境组件 ``env.yaml`` 中声明 reward term。EmbodiChain 的 ``config_to_cfg()`` 解析配置，原生 ``step()`` 通过 ``RewardManager`` 计算 reward。仿真任务通过 ``compute_task_state()`` 返回原生成功和失败状态：``isaaclab`` 使用首次基准成功或掉落状态，``evaluation`` 使用连续 20 步稳定状态。任务每个物理控制步更新一次状态，读取 info 不会推进稳定计数。RLinf 直接使用环境返回的 reward，并通过 ``info["rewards"]["success"]`` 返回加权前的成功值。SDK 直接应用权重；默认权重已经是每个控制步 1，不能再次乘以控制周期。
 
-需要调整权重时，复制内置文件，并通过 ``env.train.reward_config_path`` 或 ``env.eval.reward_config_path`` 指向新文件。PPO preset 如下：
+需要调整 reward 时，复制环境组件并修改其中的 ``env.rewards``，再通过原生任务 deployment 的 ``environment.component`` 选择该组件。将 ``env.train.gym_config_path`` 或 ``env.eval.gym_config_path`` 指向这份 deployment。默认 term 如下：
 
 .. code-block:: yaml
 
-   isaaclab:
-     stack_success:
-       func: rlinf.envs.sim.embodichain.stack_cube_metrics:stack_cube_success_reward
-       mode: add
-       weight: 1.0
-       params:
-         success_key: baseline_success
+   env:
+     rewards:
+       success:
+         func: success_reward
+         mode: add
+         weight: 1.0
+         params: {}
 
 修改权重会改变训练目标。下方已测结果使用默认权重和原有的成功、终止判据。CartPole 继续使用其任务原生 reward。
 
-:download:`Reward 迁移对照记录 <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/reward_manager_parity.json>` 包含针对旧 adapter 的 14 组 CPU 轨迹：74,700 个 reward 标量及已有观测、done、episode 字段均完全一致。检查使用真实 SDK RewardManager 和预设的场景测量值，没有重新运行 GPU 物理仿真或 PPO 训练。
+此前的 :download:`原生 reward 对照记录 <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/native_reward_parity.json>` 包含针对旧 adapter 的 14 组 CPU 轨迹：在记录的源码快照下，74,700 个 reward 标量及已有 transition 字段均完全一致。当前 Gym 配置在两种 protocol 下均将 reward term 命名为 ``success``。这些检查验证 reward 和 episode contract，不代表新的 PPO 训练结果。
+
+:download:`Stack Cube reward 验证记录 <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/isaaclab_reward_alignment.json>` 包含 39 项通过的 CPU 检查，以及 8 个真实 GPU 场景的专家重放，每个场景执行 380 个控制步，结束时均满足稳定完成条件。将 3,040 个实测 reward 和 1,055 个边界样本与固定版本的 IsaacLab 源码对照，误差为零。IsaacLab 对照使用其原始 manager 和判定函数源码，以及轻量的配置与场景对象；完整 IsaacLab 运行时验证仍需先确认首次启动的 NVIDIA EULA。
 
 使用确定性 SFT 裁剪训练的 checkpoint 应保持 ``actor.model.openpi.eval_sft_image_crop: true``。在此 recipe 中，该设置同时作用于 RL 评估、随机训练 rollout 和 actor logprob 重算；三条路径采用相同的前视图像裁剪，不使用数据增强 RNG，腕部图像保持原有取景。第一次 optimizer update 前，需确认 policy 权重保持一致、保存与重算的 logprob 一致，并重新验证选定 checkpoint 的闭环成功率。新增 value head 单独初始化。
 

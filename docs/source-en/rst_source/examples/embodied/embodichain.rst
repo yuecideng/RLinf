@@ -667,41 +667,47 @@ Success requires a released two-layer stack that remains stable for the last
 reward, weight synchronization, and checkpoint recovery before a training run;
 the CPU contract tests alone do not establish GPU feasibility.
 
-The Stack Cube environment selects the PPO reward explicitly with
-``stack_cube_reward: isaaclab``. Each baseline stacking success gives reward 1
+The Stack Cube environment selects the episode rules with
+``stack_cube_protocol: isaaclab``. Each baseline stacking success gives reward 1
 at 20 Hz, matching the reference reward weight 20 multiplied by the 0.05 s
 control interval. Dropping a cube below z=-0.05 m terminates the episode.
 Stable completion remains a separate metric; it does not
 replace the reference reward predicate.
 
-The adapter composes reward terms with EmbodiChain's ``RewardManager`` using
-``reward_config_path``. The bundled ``rewards.yaml`` defines two ``RewardCfg``
-presets: ``isaaclab`` scores baseline stacking success, and ``evaluation``
-scores twenty consecutive stable frames. The adapter owns the consecutive-step
-counter and active-episode mask, so the manager receives the same predicates
-and masks as the original implementation. Term values are exposed in
-``info["rewards"]``. The SDK reward manager applies weights directly; the
-default weight is already 1 per control step and must not be multiplied by
-the control interval again.
+Configure reward terms in the native Gym environment component, ``env.yaml``.
+EmbodiChain's ``config_to_cfg()`` resolves these terms, and its native ``step()``
+computes reward through ``RewardManager``. The simulation task's
+``compute_task_state()`` supplies native success and failure: ``isaaclab`` uses
+the first baseline success/drop transition, while ``evaluation`` uses twenty
+consecutive stable frames. The task advances this state once per physical
+control step; reading info does not advance the dwell. RLinf passes the returned
+reward through and exposes the unweighted success term in
+``info["rewards"]["success"]``. The SDK applies
+weights directly; the default weight is already 1 per control step and must
+not be multiplied by the control interval again.
 
-Copy the bundled file and set ``env.train.reward_config_path`` or
-``env.eval.reward_config_path`` to use a different weight. Its PPO preset is:
+To change the reward, copy the environment component, edit its ``env.rewards``,
+and select it through ``environment.component`` in a native task deployment.
+Point ``env.train.gym_config_path`` or ``env.eval.gym_config_path`` at that
+deployment. The default term is:
 
 .. code-block:: yaml
 
-   isaaclab:
-     stack_success:
-       func: rlinf.envs.sim.embodichain.stack_cube_metrics:stack_cube_success_reward
-       mode: add
-       weight: 1.0
-       params:
-         success_key: baseline_success
+   env:
+     rewards:
+       success:
+         func: success_reward
+         mode: add
+         weight: 1.0
+         params: {}
 
 Changing the weight changes the training objective. The measured results below
 use the default weight and the original success and termination predicates.
 CartPole continues to use its task's native reward.
 
-The :download:`reward migration comparison <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/reward_manager_parity.json>` records 14 scripted CPU traces against the previous adapter: 74,700 scalar rewards and all existing observation, done and episode fields match exactly. These checks exercise the real SDK RewardManager with scripted scene measurements; they do not rerun GPU physics or PPO training.
+The earlier :download:`native reward comparison <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/native_reward_parity.json>` records 14 scripted CPU traces against the preceding adapter: 74,700 scalar rewards and the existing transition fields match exactly at the recorded source snapshot. The current Gym configuration names its reward term ``success`` in both protocols. These checks establish reward and episode contracts; they do not constitute a new PPO training result.
+
+The :download:`Stack Cube reward validation <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/isaaclab_reward_alignment.json>` records 39 passing CPU cases and eight real GPU expert replays of 380 control steps each, all stable at completion. Comparing their 3,040 measured rewards and 1,055 boundary samples against the pinned IsaacLab source produced zero error. The IsaacLab comparison executes its original manager and predicate source with lightweight configuration and scene objects; a full IsaacLab runtime test remains pending first-launch NVIDIA EULA confirmation.
 
 Keep ``actor.model.openpi.eval_sft_image_crop: true`` for checkpoints trained
 with the deterministic SFT crop. In this recipe it applies to RL evaluation,
