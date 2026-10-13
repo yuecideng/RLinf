@@ -638,8 +638,10 @@ class Pi0(model.BaseModel):
         #   Block                  -- leftover attn+mlp is bf16 after RMSNorm
         #   Encoder1DBlock         -- SigLIP layer, all bf16
         #   Encoder                -- leftover post_layernorm is bf16
-        #   SigLIPViT              -- leftover pos_embedding is fp32 after
-        #                            stem / head wrap
+        #   SigLIPViT              -- stem + pos_embedding remain fp32 after
+        #                            encoder / head wrap. Functional conv2d reads
+        #                            stem parameters directly, so a separate stem
+        #                            FSDP wrapper would bypass its forward hooks.
         names = [
             "Block",
             "Encoder1DBlock",
@@ -662,7 +664,6 @@ class Pi0(model.BaseModel):
             "action_time_mlp_out",
             "time_mlp_in",
             "time_mlp_out",
-            "stem",  # fp32 patch embedding (OpenPI SiglipVisionEmbeddings)
             "head",  # bf16 multi-modal projector
         ]
 

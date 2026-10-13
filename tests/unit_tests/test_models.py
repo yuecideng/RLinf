@@ -44,6 +44,7 @@ from rlinf.models.embodiment.openpi.apxinf_adapter import (
     _active_token_ids,
 )
 from rlinf.models.embodiment.openpi.pi0 import Pi0
+from rlinf.models.embodiment.openpi.tasks.rl import Pi0RL, Pi0RLConfig
 from rlinf.scheduler import Worker
 from rlinf.utils.env_helpers import HistoryManager
 from rlinf.utils.env_helpers.delay_sampler import (
@@ -2425,3 +2426,339 @@ def test_cosmos3_sglang_response_keeps_every_env_in_input_order():
     assert actions.shape == (2, 16, 7)
     assert torch.all(actions[0, :, 6] == -0.5)
     assert torch.all(actions[1, :, 6] == 0.5)
+
+
+class _ImageConditionedRLPolicy(Pi0RL):
+    """Small image-conditioned velocity with the real RL sampler and replay."""
+
+    def __init__(self, crop, noise_method):
+        torch.nn.Module.__init__(self)
+        self.scale = torch.nn.Parameter(torch.tensor(1.0))
+        self.action_dim = self.model_action_dim = 32
+        self.action_horizon = 10
+        self.action_chunk = 5
+        self.action_env_dim = 7
+        self.num_steps = 5
+        self.config_name = "pi05_isaaclab_stack_cube"
+        self.state_indices = None
+        self.eval_sft_image_crop = crop
+        self.rl_cfg = Pi0RLConfig(noise_method=noise_method, noise_level=0.5)
+        self.setup_transforms([self.transform], [self.output])
+
+    @staticmethod
+    def transform(sample):
+        return {
+            "image": {
+                "base_0_rgb": sample["observation/image"],
+                "left_wrist_0_rgb": sample["observation/wrist_image"],
+                "right_wrist_0_rgb": np.zeros_like(sample["observation/image"]),
+            },
+            "image_mask": {
+                "base_0_rgb": True,
+                "left_wrist_0_rgb": True,
+                "right_wrist_0_rgb": False,
+            },
+            "state": sample["observation/state"],
+            "tokenized_prompt": np.zeros(4, dtype=np.int64),
+            "tokenized_prompt_mask": np.ones(4, dtype=bool),
+        }
+
+    @staticmethod
+    def output(sample):
+        return {"actions": sample["actions"][:, :7]}
+
+    def build_prefix_cache(self, observation):
+        front = observation.images["base_0_rgb"].mean(dim=(1, 2, 3))
+        wrist = observation.images["left_wrist_0_rgb"].mean(dim=(1, 2, 3))
+        return None, None, (front + 0.5 * wrist) * self.scale
+
+    def run_suffix(self, observation, state, time, cache, prefix_mask):
+        return cache[:, None, None].expand_as(state)
+
+    def velocity_from_suffix(self, suffix):
+        return suffix
+
+
+@pytest.mark.parametrize("crop", [False, True])
+def test_openpi_rl_training_preserves_sft_pixels_and_replay_logprobs(crop):
+    from rlinf.models.embodiment.openpi.modules.model import preprocess_observation
+
+    x = torch.linspace(-1, 1, 224)
+    yy, xx = torch.meshgrid(x, x, indexing="ij")
+    image = torch.stack((xx, yy, xx * yy), dim=-1).unsqueeze(0)
+    env_obs = {
+        "main_images": image,
+        "wrist_images": image.flip(2),
+        "states": torch.zeros(1, 32),
+        "task_descriptions": ["stack"],
+    }
+    noise = torch.zeros(1, 10, 32)
+    ode = _ImageConditionedRLPolicy(crop, "flow_ode").eval()
+    expected_obs = preprocess_observation(
+        ode.env_obs_to_observation(env_obs), train=crop, rng=None
+    )
+    signal = (
+        expected_obs.images["base_0_rgb"].mean()
+        + 0.5 * expected_obs.images["left_wrist_0_rgb"].mean()
+    )
+    eval_actions, _ = ode.predict_action_batch(env_obs, mode="eval", noise=noise)
+    train_actions, _ = ode.predict_action_batch(env_obs, mode="train", noise=noise)
+    torch.testing.assert_close(eval_actions, torch.full((1, 5, 7), -signal))
+    torch.testing.assert_close(train_actions, eval_actions)
+
+    sde = _ImageConditionedRLPolicy(crop, "flow_sde").eval()
+    _, sampled = sde.predict_action_batch(
+        env_obs, mode="train", noise=noise, rng=torch.Generator().manual_seed(24)
+    )
+    sde.train()
+    replayed = sde(forward_inputs=sampled["forward_inputs"], compute_values=False)
+    ratio = (replayed["logprobs"] - sampled["prev_logprobs"]).exp()
+    torch.testing.assert_close(ratio, torch.ones_like(ratio), atol=1e-6, rtol=1e-6)
+    replayed["logprobs"].sum().backward()
+    assert sde.scale.grad is not None and torch.isfinite(sde.scale.grad)
+
+
+def test_openpi_sft_checkpoint_load_preserves_policy_and_new_critic(tmp_path):
+    from rlinf.models.embodiment.openpi.checkpoint import load_full_weights
+
+    policy = torch.nn.Module()
+    policy.action_out_proj = torch.nn.Linear(4, 7)
+    sft_weights = {
+        key: value.detach().clone() for key, value in policy.state_dict().items()
+    }
+    path = tmp_path / "full_weights.pt"
+    torch.save(sft_weights, path)
+    restored = torch.nn.Module()
+    restored.action_out_proj = torch.nn.Linear(4, 7)
+    restored.value_head = torch.nn.Linear(4, 1)
+    critic_before = {
+        key: value.detach().clone()
+        for key, value in restored.value_head.state_dict().items()
+    }
+    load_full_weights(restored, path, expect_rlt=False)
+    for key, expected in sft_weights.items():
+        assert torch.equal(restored.state_dict()[key], expected)
+    for key, expected in critic_before.items():
+        assert torch.equal(restored.value_head.state_dict()[key], expected)
+
+    torch.save({"action_out_proj.bias": sft_weights["action_out_proj.bias"]}, path)
+    with pytest.raises(RuntimeError, match="Pi0 tensors missing"):
+        load_full_weights(restored, path, expect_rlt=False)
+
+
+@pytest.mark.parametrize("train_expert_only", [False, True])
+def test_openpi_rl_parent_train_preserves_frozen_vision_mode(train_expert_only):
+    from dataclasses import replace
+
+    policy = _ImageConditionedRLPolicy(True, "flow_sde")
+    policy.img = torch.nn.Sequential(torch.nn.Linear(3, 3), torch.nn.Dropout(0.5))
+    policy.img.requires_grad_(not train_expert_only)
+    policy.rl_cfg = replace(policy.rl_cfg, train_expert_only=train_expert_only)
+    parent = torch.nn.Sequential(policy).eval()
+    parent.train()
+    assert policy.training
+    assert policy.img.training is (not train_expert_only)
+    assert policy.img[1].training is (not train_expert_only)
+    assert policy.scale.requires_grad
+    parent.eval()
+    assert not policy.training and not policy.img.training
+    # Full SFT uses Pi0, whose train semantics continue to enable vision training.
+    sft = _ImagePreprocessingPi0(True).eval().train()
+    assert sft.training and sft.dropout.training
+
+
+@pytest.fixture
+def cpu_openpi_sft_worker():
+    """Exercise the SFT initialization lifecycle with a small CPU model."""
+    from rlinf.workers.sft.fsdp_vla_sft_worker import FSDPVlaSftWorker
+
+    class CPUWorker(FSDPVlaSftWorker):
+        def __init__(self, seed=0, rank=0, model_type="openpi"):
+            self.cfg = OmegaConf.create(
+                {
+                    "actor": {
+                        "seed": seed,
+                        "model": {"model_type": model_type},
+                        "optim": {"total_training_steps": 30000},
+                    }
+                }
+            )
+            self._rank = rank
+
+        def setup_model_and_optimizer(self):
+            self.model = torch.nn.Linear(7, 32)
+            self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=2.5e-5)
+
+    return CPUWorker
+
+
+def _sft_cpu_random_draws():
+    import random
+
+    return (
+        random.random(),
+        np.random.rand(),
+        torch.randn(2, 10, 32),
+        torch.distributions.Beta(torch.tensor(1.5), torch.tensor(1.0)).sample((2,)),
+    )
+
+
+def _assert_sft_random_draws_equal(left, right):
+    assert left[:2] == right[:2]
+    for a, b in zip(left[2:], right[2:], strict=True):
+        torch.testing.assert_close(a, b, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_openpi_sft_seed_controls_initialization_and_training(
+    cpu_openpi_sft_worker, seed
+):
+    from rlinf.utils.utils import seed_everything
+
+    seed_everything(987)
+    first = cpu_openpi_sft_worker(seed=seed, rank=1)
+    first.init_worker()
+    expected_weights = {k: v.clone() for k, v in first.model.state_dict().items()}
+    expected_draws = _sft_cpu_random_draws()
+    seed_everything(654)
+    second = cpu_openpi_sft_worker(seed=seed, rank=1)
+    second.init_worker()
+    for k, value in second.model.state_dict().items():
+        torch.testing.assert_close(value, expected_weights[k], rtol=0, atol=0)
+    _assert_sft_random_draws_equal(_sft_cpu_random_draws(), expected_draws)
+    assert torch.initial_seed() == seed + 1
+
+
+def test_openpi_sft_ranks_share_initial_weights_and_have_distinct_noise(
+    cpu_openpi_sft_worker,
+):
+    first = cpu_openpi_sft_worker(seed=0, rank=0)
+    first.init_worker()
+    initial = {k: v.clone() for k, v in first.model.state_dict().items()}
+    noise0 = _sft_cpu_random_draws()
+    second = cpu_openpi_sft_worker(seed=0, rank=1)
+    second.init_worker()
+    for k, value in second.model.state_dict().items():
+        torch.testing.assert_close(value, initial[k], rtol=0, atol=0)
+    assert not torch.equal(noise0[2], _sft_cpu_random_draws()[2])
+
+
+def test_openpi_sft_checkpoint_rng_supersedes_fresh_initialization(
+    cpu_openpi_sft_worker,
+):
+    from rlinf.utils.utils import get_rng_state, set_rng_state
+
+    worker = cpu_openpi_sft_worker(seed=1, rank=1)
+    worker.init_worker()
+    _sft_cpu_random_draws()
+    saved = get_rng_state()
+    expected = _sft_cpu_random_draws()
+    restored = cpu_openpi_sft_worker(seed=1, rank=1)
+    restored.init_worker()
+    set_rng_state(saved)
+    _assert_sft_random_draws_equal(_sft_cpu_random_draws(), expected)
+
+
+def test_other_vla_sft_initialization_preserves_existing_rng_behavior(
+    cpu_openpi_sft_worker,
+):
+    from rlinf.utils.utils import get_rng_state, seed_everything, set_rng_state
+
+    seed_everything(999)
+    initial = get_rng_state()
+    worker = cpu_openpi_sft_worker(seed=0, model_type="openvla")
+    worker.init_worker()
+    actual = _sft_cpu_random_draws()
+    set_rng_state(initial)
+    torch.nn.Linear(7, 32)
+    _assert_sft_random_draws_equal(_sft_cpu_random_draws(), actual)
+    assert torch.initial_seed() == 999
+
+
+def test_openpi_fsdp_vision_wrap_owns_functional_stem_parameters():
+    """The functional convolution belongs to the invoked vision FSDP unit."""
+    from rlinf.models.embodiment.openpi.modules.siglip import SigLIPViT
+    from rlinf.models.embodiment.openpi.pi0 import Pi0
+    from rlinf.models.embodiment.openpi.pi0_config import Pi0Config
+
+    with torch.device("meta"):
+        full = Pi0(Pi0Config(pi05=True, action_horizon=10, discrete_state_input=False))
+    policy = get_fsdp_wrap_policy(full, OmegaConf.create({}), model_type="openpi")
+    small = torch.nn.Module()
+    small.llm = torch.nn.Identity()
+    small.img = SigLIPViT("mu/14", num_classes=32, dtype_mm="bfloat16")
+    Pi0._mark_fsdp_wrap_names(small)
+    Pi0.to_bfloat16_for_selected_params(small)
+
+    def wraps(module):
+        return policy(
+            module,
+            recurse=False,
+            nonwrapped_numel=sum(p.numel() for p in module.parameters()),
+        )
+
+    assert wraps(small.img)
+    assert not wraps(small.img.stem)
+    assert wraps(small.img.encoder)
+    assert wraps(small.img.encoder.layers[0])
+    assert wraps(small.img.head)
+    assert small.img.stem.weight.dtype == torch.float32
+    assert small.img.stem.bias.dtype == torch.float32
+    assert small.img.pos_embedding.dtype == torch.float32
+    assert small.img.head.weight.dtype == torch.bfloat16
+    assert all(p.dtype == torch.bfloat16 for p in small.img.encoder.parameters())
+    assert "img.stem.weight" in small.state_dict()
+    assert "img.stem.bias" in small.state_dict()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Interpreter handoff uses POSIX FDs.")
+def test_stack_cube_policy_process_external_interpreter_round_trip(tmp_path):
+    from toolkits.lerobot.evaluate_stack_cube_openpi import start_policy_process
+
+    interpreter = tmp_path / "model-python"
+    interpreter.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys, numpy as np\n"
+        "from multiprocessing.connection import Connection\n"
+        "connection = Connection(int(sys.argv[-2]))\n"
+        "options = json.loads(sys.argv[-1])\n"
+        "connection.send({'ready': True, 'options': options})\n"
+        "while True:\n"
+        "    message = connection.recv()\n"
+        "    if message['command'] == 'close': break\n"
+        "    state = message['observation']['states']\n"
+        "    connection.send({'actions': np.full((1, 5, 7), state[0, 0], np.float32)})\n"
+        "connection.close()\n"
+    )
+    interpreter.chmod(0o700)
+    checkpoint, stats = tmp_path / "checkpoint", tmp_path / "norm_stats.json"
+    connection, process = start_policy_process(
+        checkpoint, stats, "1", True, interpreter
+    )
+    try:
+        assert connection.poll(10)
+        ready = connection.recv()
+        assert ready["ready"]
+        assert ready["options"] == {
+            "checkpoint": str(checkpoint),
+            "stats": str(stats),
+            "gpu": "1",
+            "crop": True,
+        }
+        connection.send(
+            {
+                "command": "predict",
+                "observation": {"states": np.full((1, 8), 2.5, np.float32)},
+            }
+        )
+        assert connection.poll(10)
+        np.testing.assert_array_equal(
+            connection.recv()["actions"], np.full((1, 5, 7), 2.5, np.float32)
+        )
+        connection.send({"command": "close"})
+        assert process.wait(timeout=10) == 0
+    finally:
+        connection.close()
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=10)

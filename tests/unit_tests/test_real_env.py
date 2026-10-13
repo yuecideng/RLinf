@@ -88,6 +88,47 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 
+def test_stack_cube_batched_scoring_distinguishes_reward_and_stability():
+    from rlinf.envs.sim.embodichain.stack_cube_metrics import stack_cube_metrics
+
+    positions = torch.tensor(
+        [[[0.5, 0.0, 0.0234], [0.5, 0.0, 0.0702], [0.5, 0.0, 0.117]]]
+    ).repeat(6, 1, 1)
+    fingers = torch.full((6, 2), 0.04)
+    linear = torch.zeros(6, 3)
+    angular = torch.zeros(6, 3)
+    positions[1, 1, 0] += 0.05  # Misplaced middle cube.
+    fingers[2, 0] = 0.02  # One finger remains closed.
+    positions[3, 2, 2] = 0.08  # One-sided Isaac height check admits overlap.
+    linear[4, 1] = 0.03  # A moving stack earns reward but is not stable.
+    positions[5, 2, 2] = -0.051  # Dropped green cube.
+
+    result = stack_cube_metrics(positions, fingers, linear, angular)
+    assert result["baseline_success"].tolist() == [
+        True,
+        False,
+        False,
+        True,
+        True,
+        False,
+    ]
+    assert result["stable_frame"].tolist() == [True, False, False, False, False, False]
+    assert result["failure"].tolist() == [False, False, False, False, False, True]
+
+
+def test_stack_cube_batched_scoring_uses_isaac_gripper_tolerance():
+    from rlinf.envs.sim.embodichain.stack_cube_metrics import stack_cube_metrics
+
+    positions = torch.tensor(
+        [[[0.5, 0.0, 0.0234], [0.5, 0.0, 0.0702], [0.5, 0.0, 0.117]]]
+    ).repeat(2, 1, 1)
+    fingers = torch.tensor([[0.040103, 0.04], [0.040105, 0.04]])
+    result = stack_cube_metrics(
+        positions, fingers, torch.zeros(2, 3), torch.zeros(2, 3)
+    )
+    assert result["baseline_success"].tolist() == [True, False]
+
+
 def _robot_info(config):
     """Describe test hardware without probing a physical device."""
     if config is None:
@@ -5127,3 +5168,380 @@ def test_embodichain_pick_demo_rejects_invalid_grasp_frame(embodichain_pick_task
     with pytest.raises(ValueError):
         case.task.create_demo_segments()
     assert not case.invocations
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [None, "wrong_order", "missing_top", "closed", "moving", "interpenetration"],
+)
+def test_embodichain_stack_cube_physical_completion(fault):
+    """Program progress cannot substitute for both released, stable layers."""
+    pytest.importorskip("embodichain")
+    from rlinf.envs.sim.embodichain.stack_cube import evaluate_stack
+
+    positions = torch.tensor(
+        [[0.5, 0.0, 0.0234], [0.5, 0.0, 0.0702], [0.5, 0.0, 0.117]]
+    )
+    fingers = torch.tensor([0.04, 0.04])
+    velocities = [0.0, 0.0, 0.0]
+    if fault == "wrong_order":
+        positions = positions[[0, 2, 1]]
+    elif fault == "missing_top":
+        positions[2] = torch.tensor([0.6, 0.1, 0.0234])
+    elif fault == "closed":
+        fingers[:] = 0.023
+    elif fault == "moving":
+        velocities[2] = 0.03
+    elif fault == "interpenetration":
+        positions[2, 2] -= 0.02
+    result = evaluate_stack(positions, fingers, velocities, [0.0] * 3)
+    assert result["stable_frame"] == (fault is None)
+    if fault in {"moving", "interpenetration"}:
+        assert result["baseline_success"]
+
+
+def test_embodichain_stack_cube_dwell_resets_after_instability():
+    """Separated stable frames cannot satisfy a consecutive one-second dwell."""
+    pytest.importorskip("embodichain")
+    from toolkits.lerobot.collect_embodichain_stack_cube import stable_completion_step
+
+    measurements = [{"stable_frame": True}] * 19 + [{"stable_frame": False}]
+    assert stable_completion_step(measurements + [{"stable_frame": True}] * 19) is None
+    assert stable_completion_step(measurements + [{"stable_frame": True}] * 20) == 40
+
+
+def test_stack_cube_eval_does_not_keep_transient_success_at_end():
+    from toolkits.lerobot.evaluate_stack_cube_openpi import summarize_episode
+
+    settled = {"layers": [True, True], "baseline_success": True, "stable_frame": True}
+    fallen = {"layers": [True, False], "baseline_success": False, "stable_frame": False}
+    result = summarize_episode([settled] * 20 + [fallen])
+    assert result["stable_once"]
+    assert result["first_stable_step"] == 20
+    assert not result["stable_at_end"]
+    assert not result["full_stack_at_end"]
+    assert result["first_layer_once"]
+
+
+def test_stack_cube_eval_requires_consecutive_physical_steps():
+    from toolkits.lerobot.evaluate_stack_cube_openpi import summarize_episode
+
+    settled = {"layers": [True, True], "baseline_success": True, "stable_frame": True}
+    moving = settled | {"stable_frame": False}
+    result = summarize_episode([settled] * 19 + [moving] + [settled] * 19)
+    assert result["full_stack_at_end"]
+    assert not result["stable_once"]
+    assert not result["stable_at_end"]
+
+
+def test_stack_cube_eval_preserves_frozen_denominator():
+    from toolkits.lerobot.evaluate_stack_cube_openpi import aggregate_reports
+
+    report = dict.fromkeys(
+        (
+            "first_layer_once",
+            "full_stack_once",
+            "full_stack_at_end",
+            "stable_once",
+            "stable_at_end",
+        ),
+        True,
+    )
+    result = aggregate_reports([report], expected=8)
+    assert result["rates"]["stable_at_end"] == 0.125
+    assert result["completed_episodes"] == 1
+    assert not result["complete"]
+
+
+def test_stack_cube_replay_rejects_changed_request(tmp_path):
+    import json
+
+    import pandas as pd
+
+    from toolkits.lerobot.evaluate_stack_cube_openpi import load_replay_episodes
+
+    episode = tmp_path / "episode_000"
+    (episode / "data/chunk-000").mkdir(parents=True)
+    request = {"seed": 7, "objects": {"blue": {"position": [0.4, 0.0, 0.0234]}}}
+    (episode / "report.json").write_text(
+        json.dumps({"request": request, "initial_state": {}})
+    )
+    pd.DataFrame({"action": [np.zeros(7, dtype=np.float32)]}).to_parquet(
+        episode / "data/chunk-000/episode_000000.parquet"
+    )
+    assert load_replay_episodes(tmp_path, [request])[7]["actions"].shape == (1, 7)
+    changed = request | {"objects": {"blue": {"position": [0.5, 0.0, 0.0234]}}}
+    with pytest.raises(ValueError, match="differs from frozen manifest"):
+        load_replay_episodes(tmp_path, [changed])
+
+
+def test_stack_cube_wrist_camera_matches_isaaclab_ros_pose():
+    """The attached camera preserves the reference optical axes and hand offset."""
+    import yaml
+    from scipy.spatial.transform import Rotation
+
+    root = Path(__file__).resolve().parents[2]
+    config = yaml.safe_load(
+        (
+            root
+            / "rlinf/envs/sim/embodichain/configs/components/embodiments/isaaclab_panda.yaml"
+        ).read_text()
+    )
+    camera = next(sensor for sensor in config["sensor"] if sensor["uid"] == "wrist")
+    extrinsics = camera["extrinsics"]
+    assert extrinsics["parent"] == "Panda/panda_hand"
+    np.testing.assert_allclose(extrinsics["pos"], [0.13, 0.0, -0.15], atol=1e-12)
+    # Reference: RLinf/IsaacLab 4246b6b4, Rewarded visuomotor camera, ROS WXYZ.
+    reference_ros = Rotation.from_quat(
+        [0.03701, 0.03701, -0.70614, -0.70614]
+    ).as_matrix()
+    configured_gl = Rotation.from_quat(extrinsics["quat"]).as_matrix()
+    np.testing.assert_allclose(
+        configured_gl @ np.diag([1, -1, -1]), reference_ros, atol=1e-12
+    )
+    assert camera["near"] == 0.1 and camera["far"] == 2.0
+    np.testing.assert_allclose(
+        camera["intrinsics"], [24.0 / 20.955 * 256] * 2 + [128.0, 128.0]
+    )
+
+
+def test_isaaclab_stack_eval_preserves_dataset_euler_and_signed_fingers():
+    from scipy.spatial.transform import Rotation
+
+    from toolkits.lerobot.evaluate_isaaclab_stack_cube_openpi import policy_observation
+
+    angles = np.array([0.2, -0.3, 0.4])
+    quat_xyzw = Rotation.from_euler("xyz", angles).as_quat()
+    raw = {
+        "policy": {
+            "eef_quat": torch.tensor(quat_xyzw[[3, 0, 1, 2]][None]),
+            "eef_pos": torch.tensor([[0.4, 0.1, 0.2]]),
+            "gripper_pos": torch.tensor([[0.04, -0.04]]),
+            "table_cam": torch.zeros(1, 8, 8, 3, dtype=torch.uint8),
+            "wrist_cam": torch.full((1, 8, 8, 3), 127, dtype=torch.uint8),
+        }
+    }
+    result = policy_observation(raw)
+    np.testing.assert_allclose(result["states"][0, 3:6], angles, atol=1e-6)
+    np.testing.assert_allclose(result["states"][0, 6:], [0.04, -0.04], atol=1e-6)
+    assert result["states"].shape == (1, 8)
+    assert result["main_images"].max() == 0
+    assert result["wrist_images"].min() == 127
+
+
+@pytest.fixture
+def stack_cube_ppo_adapter(monkeypatch, tmp_path, embodichain_sdk_boundary):
+    """Exercise Gym transitions with a deterministic scene at the SDK boundary."""
+    import json
+
+    native_name = "rlinf.envs.sim.embodichain.stack_cube"
+    previous_native = sys.modules.get(native_name)
+    sdk_types = types.ModuleType("embodichain.lab.gym.envs.types")
+    sdk_types.ControllerAction = SimpleNamespace
+    monkeypatch.setitem(sys.modules, sdk_types.__name__, sdk_types)
+    native = importlib.import_module(native_name)
+    from rlinf.envs.sim.embodichain import EmbodiChainEnv
+    from rlinf.envs.sim.embodichain.stack_cube_metrics import stack_cube_metrics
+
+    class Scene:
+        def __init__(self, num_envs):
+            self.num_envs = num_envs
+            self.time = 0
+            self.seeds = torch.zeros(num_envs)
+            self.outcome = "early_done"
+
+        def reset_requests(self, requests, *, initial_states=None):
+            self.time = 0
+            self.seeds = torch.tensor([r["seed"] for r in requests])
+            return self.observation(), {}
+
+        def observation(self):
+            return {
+                "states": torch.stack(
+                    (self.seeds, torch.full_like(self.seeds, self.time)), dim=-1
+                ),
+                "task_descriptions": ["stack"] * self.num_envs,
+            }
+
+        def policy_observation(self, obs):
+            return obs
+
+        def step_relative(self, actions):
+            self.time += 1
+            return self.observation(), None, None, None, None
+
+        def batch_stack_metrics(self):
+            positions = torch.tensor(
+                [[[0.5, 0.0, 0.0234], [0.5, 0.0, 0.0702], [0.5, 0.0, 0.117]]]
+            ).repeat(self.num_envs, 1, 1)
+            fingers = torch.full((self.num_envs, 2), 0.04)
+            linear = torch.zeros(self.num_envs, 3)
+            if self.outcome == "early_done":
+                fingers[:] = 0.02
+                if self.time >= 2:
+                    fingers[0] = 0.04
+                if self.num_envs > 1 and self.time >= 3:
+                    positions[1, 2, 2] = -0.1
+            elif self.time == 12:
+                linear[0, 0] = 0.03
+            return stack_cube_metrics(
+                positions, fingers, linear, torch.zeros(self.num_envs, 3)
+            )
+
+        def close(self, **kwargs):
+            pass
+
+    scenes = []
+
+    def build_scene(_asset, *, num_envs, **kwargs):
+        scene = Scene(num_envs)
+        scenes.append(scene)
+        return scene
+
+    monkeypatch.setattr(native, "build_stack_cube_env", build_scene)
+    manifest = tmp_path / "requests.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "requests": [
+                    {"request_id": f"request-{i}", "seed": i} for i in range(256)
+                ]
+            }
+        )
+    )
+
+    def construct(num_envs=3, seed_offset=0, total_num_processes=1, **overrides):
+        cfg = {
+            "gym_config_path": str(
+                _ROOT
+                / _PICK_CONFIG_PREFIX
+                / "tasks/manipulation/stack_cube/task.panda.yaml"
+            ),
+            "panda_urdf": "test_asset.urdf",
+            "request_manifest": str(manifest),
+            "sim_device": "cpu",
+            "auto_reset": False,
+            "ignore_terminations": False,
+            "stack_cube_reward": "isaaclab",
+            "max_episode_steps": 25,
+            "use_fixed_reset_state_ids": False,
+        }
+        cfg.update(overrides)
+        env = EmbodiChainEnv(
+            SimpleNamespace(**cfg),
+            num_envs,
+            seed_offset,
+            total_num_processes,
+            SimpleNamespace(cluster_node_rank=0, rank=0),
+        )
+        return env, scenes[-1]
+
+    try:
+        yield construct
+    finally:
+        if previous_native is None:
+            sys.modules.pop(native_name, None)
+
+
+def test_stack_cube_ppo_preserves_first_done_and_terminal_observations(
+    stack_cube_ppo_adapter,
+):
+    from rlinf.utils.metric_utils import compute_loss_mask
+
+    env, _ = stack_cube_ppo_adapter()
+    env.reset()
+    obs, rewards, terms, truncs, infos = env.chunk_step(torch.zeros(3, 5, 7))
+    assert rewards.tolist() == [[0, 1, 0, 0, 0], [0] * 5, [0] * 5]
+    assert terms.tolist() == [
+        [False, True, False, False, False],
+        [False, False, True, False, False],
+        [False] * 5,
+    ]
+    assert not truncs.any()
+    assert obs[-1]["states"][:, 1].tolist() == [5, 5, 5]
+    final = infos[-1]["final_observation"]["states"]
+    assert final[:2, 1].tolist() == [2, 3]
+    assert infos[-1]["_final_observation"].tolist() == [True, True, False]
+    loss_mask, _ = compute_loss_mask(torch.stack((torch.zeros_like(terms), terms)))
+    assert loss_mask[0].tolist() == [
+        [True, True, False, False, False],
+        [True, True, True, False, False],
+        [True] * 5,
+    ]
+    _, next_rewards, _, _, _ = env.chunk_step(torch.zeros(3, 5, 7))
+    assert not next_rewards.any()
+
+
+@pytest.mark.parametrize("num_envs", [1, 8, 32])
+def test_stack_cube_ppo_reset_cohorts_rotate_and_partial_reset_is_rejected(
+    stack_cube_ppo_adapter, num_envs
+):
+    env, _ = stack_cube_ppo_adapter(num_envs)
+    first, first_info = env.reset()
+    env.update_reset_state_ids()
+    second, second_info = env.reset()
+    assert first["states"][:, 0].tolist() == list(range(num_envs))
+    assert second["states"][:, 0].tolist() == list(range(num_envs, num_envs * 2))
+    assert first_info["reset_request_ids"] == [f"request-{i}" for i in range(num_envs)]
+    assert second_info["reset_request_seeds"] == list(range(num_envs, num_envs * 2))
+    if num_envs > 1:
+        with pytest.raises(NotImplementedError, match="full-batch"):
+            env.reset(options={"env_idx": [0]})
+        after_rejection, *_ = env.step(torch.zeros(num_envs, 7))
+        assert torch.equal(after_rejection["states"][:, 0], second["states"][:, 0])
+        assert after_rejection["states"][:, 1].tolist() == [1] * num_envs
+    fixed, _ = stack_cube_ppo_adapter(num_envs, use_fixed_reset_state_ids=True)
+    first_fixed, _ = fixed.reset()
+    fixed.update_reset_state_ids()
+    second_fixed, _ = fixed.reset()
+    assert torch.equal(first_fixed["states"], second_fixed["states"])
+
+
+def test_stack_cube_ppo_eval_counts_consecutive_steps_and_preserves_timeout(
+    stack_cube_ppo_adapter,
+):
+    env, scene = stack_cube_ppo_adapter(8, ignore_terminations=True)
+    scene.outcome = "stability"
+    env.reset()
+    for _ in range(5):
+        _, _, terms, truncs, infos = env.chunk_step(torch.zeros(8, 5, 7))
+        assert not terms.any()
+    assert truncs[:, -1].all()
+    assert not truncs[:, :-1].any()
+    assert infos[-1]["episode"]["success_at_end"].tolist() == [False] + [True] * 7
+    assert infos[-1]["final_observation"]["states"][:, 1].tolist() == [25] * 8
+    with pytest.raises(RuntimeError, match="Reset Stack Cube"):
+        env.step(torch.zeros(8, 7))
+
+
+def test_stack_cube_ppo_rejects_asynchronous_autoreset(stack_cube_ppo_adapter):
+    with pytest.raises(ValueError, match="auto_reset=false"):
+        stack_cube_ppo_adapter(8, auto_reset=True)
+
+
+def test_stack_cube_ppo_synchronous_autoreset_keeps_final_observation(
+    stack_cube_ppo_adapter,
+):
+    env, _ = stack_cube_ppo_adapter(
+        8, auto_reset=True, ignore_terminations=True, max_episode_steps=5
+    )
+    env.reset()
+    obs, _, _, truncs, infos = env.chunk_step(torch.zeros(8, 5, 7))
+    assert truncs[:, -1].all()
+    assert obs[-1]["states"][:, 1].tolist() == [0] * 8
+    assert obs[-1]["states"][:, 0].tolist() == list(range(8, 16))
+    final = infos[-1]["final_observation"]["states"]
+    assert final[:, 1].tolist() == [5] * 8
+    assert final[:, 0].tolist() == list(range(8))
+
+
+def test_stack_cube_ppo_workers_partition_rotating_requests(stack_cube_ppo_adapter):
+    first, _ = stack_cube_ppo_adapter(3, seed_offset=0, total_num_processes=2)
+    second, _ = stack_cube_ppo_adapter(3, seed_offset=1, total_num_processes=2)
+    for start in (0, 6):
+        first_obs, _ = first.reset()
+        second_obs, _ = second.reset()
+        assert first_obs["states"][:, 0].tolist() == list(range(start, start + 3))
+        assert second_obs["states"][:, 0].tolist() == list(range(start + 3, start + 6))
+        first.update_reset_state_ids()
+        second.update_reset_state_ids()

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import copy
+import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -296,6 +297,11 @@ class EmbodiChainEnv(gym.Env):
         self._is_start = True
         self._elapsed_steps = torch.zeros(0, dtype=torch.int32)
 
+        self._stack_cube = False
+        self._stack_ppo = False
+        self._stack_requests = []
+        self._stack_request_index = 0
+        self._stack_stable_steps = 0
         self.env = self._build_env()
         if not self.auto_reset:
             # EmbodiChain performs its own reset after terminal transitions.
@@ -432,6 +438,55 @@ class EmbodiChainEnv(gym.Env):
         gym_config_path_str = str(gym_config_path_cfg)
         gym_config_path = _resolve_gym_config_path(gym_config_path_str)
         gym_config = load_config(gym_config_path)
+        if gym_config["id"] == "RLinf-StackCube-Expert-v1":
+            from rlinf.envs.sim.embodichain.stack_cube import build_stack_cube_env
+
+            reward_mode = _cfg_get(self.cfg, "stack_cube_reward", "evaluation")
+            if reward_mode not in {"evaluation", "isaaclab"}:
+                raise ValueError("Stack Cube reward must be evaluation or isaaclab.")
+            self._stack_ppo = reward_mode == "isaaclab"
+            if self.num_envs != 1 and not self._stack_ppo:
+                raise ValueError(
+                    "Stack Cube frozen-manifest evaluation requires num_envs=1."
+                )
+            if self._stack_ppo and self.auto_reset and not self.ignore_terminations:
+                raise ValueError(
+                    "Stack Cube PPO requires auto_reset=false; selective physical "
+                    "resets cannot safely clear contacts in the shared world."
+                )
+            if (
+                self.correction_enabled
+                or self.action_application_mode != "target_position"
+                or self.clip_actions
+            ):
+                raise ValueError(
+                    "Stack Cube evaluation requires uncorrected relative EEF control without clipping."
+                )
+            requests_path = _cfg_get(self.cfg, "request_manifest")
+            if not requests_path:
+                raise ValueError("Stack Cube requires a frozen request_manifest.")
+            self._stack_requests = json.loads(Path(requests_path).read_text())[
+                "requests"
+            ]
+            if not self._stack_requests:
+                raise ValueError("Stack Cube request manifest must not be empty.")
+            if self._stack_ppo and len(self._stack_requests) < self.num_envs:
+                raise ValueError("Stack Cube needs at least one request per scene.")
+            if self._stack_ppo:
+                self._stack_request_index = self.seed_offset * self.num_envs
+            self._stack_cube = True
+            self.task_prompt = "Stack the red block on the blue block, then stack the green block on the red block"
+            env = build_stack_cube_env(
+                _cfg_get(self.cfg, "panda_urdf"),
+                seed=self.seed,
+                device=str(self.device),
+                max_episode_steps=self.max_episode_steps,
+                num_envs=self.num_envs,
+            )
+            env.action_space = gym.spaces.Box(
+                -np.inf, np.inf, shape=(7,), dtype=np.float32
+            )
+            return env
         if self.task_prompt is None:
             self.task_prompt = _config_task_prompt(
                 gym_config, gym_config_path, load_config
@@ -520,6 +575,8 @@ class EmbodiChainEnv(gym.Env):
         return image.to(dtype=torch.uint8)
 
     def _wrap_obs(self, raw_obs: dict[str, Any]) -> dict[str, Any]:
+        if getattr(self, "_stack_cube", False):
+            return self.env.policy_observation(raw_obs)
         robot_obs = raw_obs["robot"]
         state_parts: list[torch.Tensor] = []
         for key in self.state_keys:
@@ -596,6 +653,26 @@ class EmbodiChainEnv(gym.Env):
     ) -> tuple[dict[str, torch.Tensor], dict[str, Any]]:
         options = {} if options is None else dict(options)
         env_idx = options.pop("env_idx", None)
+        if self._stack_cube:
+            if self._stack_ppo:
+                return self._reset_stack_cube_ppo(env_idx, options)
+            if env_idx is not None and list(env_idx) != [0]:
+                raise ValueError(
+                    "Single-scene Stack Cube reset accepts only env_idx=[0]."
+                )
+            request = options.pop("request", None)
+            if request is None:
+                request = self._stack_requests[
+                    self._stack_request_index % len(self._stack_requests)
+                ]
+                self._stack_request_index += 1
+            raw_obs, infos = self.env.reset_request(
+                request, initial_state=options.pop("initial_state", None)
+            )
+            self._reset_metrics()
+            self._stack_stable_steps = 0
+            self._is_start = True
+            return self._wrap_obs(raw_obs), infos
         if env_idx is None:
             raw_obs, infos = self.env.reset(seed=seed)
             self._reset_metrics()
@@ -605,6 +682,44 @@ class EmbodiChainEnv(gym.Env):
             self._reset_metrics(reset_ids)
         self._is_start = True
         return self._wrap_obs(raw_obs), self._wrap_info(infos)
+
+    def _reset_stack_cube_ppo(self, env_idx, options):
+        """Reset synchronized scenes without advancing unrelated episodes."""
+        if env_idx is not None and list(env_idx) != list(range(self.num_envs)):
+            raise NotImplementedError(
+                "Stack Cube supports synchronized full-batch reset only; "
+                "partial reset would advance other scenes while clearing contacts."
+            )
+        requests = options.pop("requests", None)
+        initial_states = options.pop("initial_states", None)
+        if options:
+            raise ValueError(
+                f"Unsupported Stack Cube PPO reset options: {list(options)}"
+            )
+        if requests is None:
+            start = self._stack_request_index
+            requests = [
+                self._stack_requests[(start + row) % len(self._stack_requests)]
+                for row in range(self.num_envs)
+            ]
+            self._stack_request_index += self.num_envs * self.total_num_processes
+        raw_obs, infos = self.env.reset_requests(
+            requests, initial_states=initial_states
+        )
+        infos = dict(
+            infos,
+            reset_request_ids=[request["request_id"] for request in requests],
+            reset_request_seeds=[request["seed"] for request in requests],
+        )
+        self._reset_metrics()
+        self._stack_stable_steps = torch.zeros(
+            self.num_envs, dtype=torch.long, device=self.device
+        )
+        self._stack_terminated = torch.zeros(
+            self.num_envs, dtype=torch.bool, device=self.device
+        )
+        self._is_start = True
+        return self._wrap_obs(raw_obs), infos
 
     def step(
         self, actions: Union[np.ndarray, torch.Tensor]
@@ -625,6 +740,11 @@ class EmbodiChainEnv(gym.Env):
         action_tensor = action_tensor.reshape(self.num_envs, -1)
         if not torch.isfinite(action_tensor).all():
             raise ValueError("EmbodiChain actions must contain only finite values.")
+
+        if self._stack_cube:
+            if self._stack_ppo:
+                return self._step_stack_cube_ppo(action_tensor)
+            return self._step_stack_cube(action_tensor)
 
         intervention_action = None
         intervention_flag = None
@@ -717,6 +837,90 @@ class EmbodiChainEnv(gym.Env):
             infos,
         )
 
+    def _step_stack_cube(self, actions: torch.Tensor):
+        """Advance physical evaluation and preserve terminal observations."""
+        if int(self._elapsed_steps[0]) >= self.max_episode_steps:
+            raise RuntimeError("Reset Stack Cube after its terminal transition.")
+        raw_obs, _, _, _, _ = self.env.step_relative(actions)
+        metrics = self.env.stack_metrics()
+        self._elapsed_steps += 1
+        self._stack_stable_steps = (
+            self._stack_stable_steps + 1 if metrics["stable_frame"] else 0
+        )
+        success = torch.tensor([self._stack_stable_steps >= 20], device=self.device)
+        terminations = torch.zeros_like(success)
+        truncations = self._elapsed_steps >= self.max_episode_steps
+        # This adapter exposes an evaluation score, not an IsaacLab PPO reward.
+        rewards = success.float()
+        infos = self._record_metrics(
+            rewards, {"success": success, "stack_metrics": metrics}
+        )
+        infos["episode"]["success_at_end"] = success.clone()
+        infos["applied_action"] = actions.clone()
+        observation = self._wrap_obs(raw_obs)
+        if truncations.any() and self.auto_reset:
+            final_info = _clone_nested(infos)
+            final_obs = _clone_nested(observation)
+            observation, _ = self.reset()
+            infos.update(
+                final_info=final_info,
+                final_observation=final_obs,
+                _final_info=truncations.clone(),
+                _final_observation=truncations.clone(),
+            )
+        self._is_start = False
+        return observation, rewards, terminations, truncations, infos
+
+    def _step_stack_cube_ppo(self, actions: torch.Tensor):
+        """Return first-episode PPO transitions and independent stability scores.
+
+        Training retains the first physical success/drop transition, gives no
+        later rewards, and resets all scenes at the rollout boundary. Unlike
+        IsaacLab's native auto-reset, later actions never enter a new episode
+        under the old chunk. The actor masks chunks after the first done.
+        Evaluation ignores success/drop termination and measures the full
+        fixed-duration trajectory, including any subsequent collapse.
+        """
+        if (self._elapsed_steps >= self.max_episode_steps).any():
+            raise RuntimeError("Reset Stack Cube after its terminal transition.")
+        raw_obs, _, _, _, _ = self.env.step_relative(actions)
+        metrics = self.env.batch_stack_metrics()
+        self._elapsed_steps += 1
+        self._stack_stable_steps = torch.where(
+            metrics["stable_frame"], self._stack_stable_steps + 1, 0
+        )
+        baseline = metrics["baseline_success"]
+        stable = self._stack_stable_steps >= 20
+        active = ~self._stack_terminated
+        rewards = baseline.float() * active
+        terminations = (baseline | metrics["failure"]) & active
+        if self.ignore_terminations:
+            terminations = torch.zeros_like(terminations)
+        self._stack_terminated |= terminations
+        truncations = self._elapsed_steps >= self.max_episode_steps
+        infos = self._record_metrics(
+            rewards,
+            {"success": stable, "fail": metrics["failure"], "stack_metrics": metrics},
+        )
+        infos["episode"]["success_at_end"] = stable.clone()
+        infos["episode"]["baseline_success_at_end"] = baseline.clone()
+        infos["applied_action"] = actions.clone()
+        observation = self._wrap_obs(raw_obs)
+        dones = terminations | truncations
+        if dones.any():
+            infos.update(
+                final_info=_clone_nested(infos),
+                final_observation=_clone_nested(observation),
+                _final_info=dones.clone(),
+                _final_observation=dones.clone(),
+            )
+            if self.auto_reset:
+                if not dones.all():
+                    raise RuntimeError("Stack Cube cannot auto-reset a partial batch.")
+                observation, _ = self.reset()
+        self._is_start = False
+        return observation, rewards, terminations, truncations, infos
+
     def chunk_step(self, chunk_actions: Union[np.ndarray, torch.Tensor]):
         chunk_actions = (
             chunk_actions.to(self.device, dtype=torch.float32)
@@ -747,7 +951,7 @@ class EmbodiChainEnv(gym.Env):
             raw_terms.append(terminations)
             raw_truncs.append(truncations)
             step_dones = torch.logical_or(terminations, truncations)
-            if step_dones.any() and self.auto_reset:
+            if step_dones.any() and (self.auto_reset or self._stack_ppo):
                 aggregated_final_info = _masked_update(
                     aggregated_final_info,
                     infos.get("final_info", infos),
@@ -767,7 +971,7 @@ class EmbodiChainEnv(gym.Env):
         past_truncations = raw_truncs_t.any(dim=1)
         past_dones = torch.logical_or(past_terminations, past_truncations)
 
-        if past_dones.any() and self.auto_reset:
+        if past_dones.any() and (self.auto_reset or self._stack_ppo):
             infos_list[-1] = dict(infos_list[-1])
             infos_list[-1]["final_info"] = (
                 aggregated_final_info
@@ -783,10 +987,14 @@ class EmbodiChainEnv(gym.Env):
             infos_list[-1]["_final_observation"] = past_dones
             infos_list[-1]["_elapsed_steps"] = past_dones
 
-        chunk_terminations = torch.zeros_like(raw_terms_t)
-        chunk_terminations[:, -1] = past_terminations
-        chunk_truncations = torch.zeros_like(raw_truncs_t)
-        chunk_truncations[:, -1] = past_truncations
+        if self._stack_ppo and not self.auto_reset and not self.ignore_terminations:
+            chunk_terminations = raw_terms_t
+            chunk_truncations = raw_truncs_t
+        else:
+            chunk_terminations = torch.zeros_like(raw_terms_t)
+            chunk_terminations[:, -1] = past_terminations
+            chunk_truncations = torch.zeros_like(raw_truncs_t)
+            chunk_truncations[:, -1] = past_truncations
 
         return (
             obs_list,
@@ -797,6 +1005,13 @@ class EmbodiChainEnv(gym.Env):
         )
 
     def update_reset_state_ids(self):
+        if self._stack_cube:
+            if not self._stack_ppo or _cfg_get(
+                self.cfg, "use_fixed_reset_state_ids", False
+            ):
+                self._stack_request_index = (
+                    self.seed_offset * self.num_envs if self._stack_ppo else 0
+                )
         return None
 
     def sample_action_space(self) -> torch.Tensor:
