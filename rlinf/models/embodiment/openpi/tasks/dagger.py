@@ -39,6 +39,8 @@ class Pi0DAgger(EnvIO, Pi0):
         action_chunk: int | None = None,
         config_name: str = "",
         state_indices: Sequence[int] | None = None,
+        eval_sft_image_crop: bool = False,
+        vision_stem_wrap_with_parent: bool = False,
     ):
         super().__init__(
             config,
@@ -47,6 +49,8 @@ class Pi0DAgger(EnvIO, Pi0):
             action_chunk=action_chunk,
             config_name=config_name,
             state_indices=state_indices,
+            eval_sft_image_crop=eval_sft_image_crop,
+            vision_stem_wrap_with_parent=vision_stem_wrap_with_parent,
         )
 
     @torch.no_grad()

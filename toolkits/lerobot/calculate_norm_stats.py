@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import dataclasses
+import json
+from pathlib import Path
+
 import numpy as np
 import openpi.models.model as _model
 import openpi.shared.normalize as normalize
@@ -32,6 +36,22 @@ class RemoveStrings(transforms.DataTransformFn):
             for k, v in x.items()
             if not np.issubdtype(np.asarray(v).dtype, np.str_)
         }
+
+
+def _parse_delta_action_mask(raw: str) -> list[bool] | None:
+    """Parse a comma-separated delta mask for custom action semantics."""
+    value = raw.strip()
+    if not value:
+        return None
+    tokens = [token.strip().lower() for token in value.split(",")]
+    accepted = {"1", "true", "t", "yes", "y"}
+    rejected = {"0", "false", "f", "no", "n"}
+    if any(token not in accepted | rejected for token in tokens):
+        raise ValueError(
+            "delta_action_mask must contain comma-separated boolean values "
+            f"(got {raw!r})."
+        )
+    return [token in accepted for token in tokens]
 
 
 def create_torch_dataloader(
@@ -106,6 +126,12 @@ def create_rlds_dataloader(
 def main(
     config_name: str,
     repo_id: str,
+    # Integer/string sentinels keep the Tyro CLI usable in minimal RLinf
+    # environments that do not install the optional ``typeguard`` package.
+    output_action_dim: int = -1,
+    output_dir: str = "",
+    num_workers: int = -1,
+    delta_action_mask: str = "",
 ):
     dataset_root = resolve_lerobot_dataset_root(repo_id)
     if not (dataset_root / "meta" / "info.json").is_file():
@@ -115,11 +141,25 @@ def main(
             "HF_LEROBOT_HOME (default: ~/.cache/huggingface/lerobot), or download "
             "the dataset first."
         )
-    config = get_openpi_config(
-        config_name,
-        repo_id=repo_id,
-    )
+    data_kwargs = {}
+    if output_action_dim is not None and output_action_dim >= 0:
+        data_kwargs["output_action_dim"] = output_action_dim
+    parsed_mask = _parse_delta_action_mask(delta_action_mask)
+    if parsed_mask is not None:
+        data_kwargs["delta_action_mask"] = parsed_mask
+    if not data_kwargs:
+        data_kwargs = None
+    config = get_openpi_config(config_name, repo_id=repo_id, data_kwargs=data_kwargs)
+    if num_workers is not None and num_workers >= 0:
+        config = dataclasses.replace(config, num_workers=num_workers)
     data_config = config.data.create(config.assets_dirs, config.model)
+    # LeRobot stores the environment action under singular ``action``. OpenPI
+    # calls the transformed sequence ``actions``; query the raw column and let
+    # the repack transform produce the latter name.
+    info = json.loads((dataset_root / "meta" / "info.json").read_text())
+    features = info.get("features", {})
+    if "action" in features and "actions" not in features:
+        data_config = dataclasses.replace(data_config, action_sequence_keys=("action",))
 
     if data_config.rlds_data_dir is not None:
         data_loader, num_batches = create_rlds_dataloader(
@@ -143,7 +183,11 @@ def main(
 
     norm_stats = {key: stats.get_statistics() for key, stats in stats.items()}
 
-    output_path = config.assets_dirs / data_config.repo_id
+    output_path = (
+        Path(output_dir).expanduser().resolve()
+        if output_dir
+        else config.assets_dirs / data_config.repo_id
+    )
     print(f"Writing stats to: {output_path}")
     normalize.save(output_path, norm_stats)
 

@@ -97,6 +97,8 @@ class Pi0(model.BaseModel):
         config_name: str = "",
         state_indices: Sequence[int] | None = None,
         rlt_cfg: OpenPiPytorchRLTConfig | None = None,
+        eval_sft_image_crop: bool = False,
+        vision_stem_wrap_with_parent: bool = False,
     ):
         super().__init__(config.action_dim, config.action_horizon, config.max_token_len)
         self.pi05 = config.pi05
@@ -163,6 +165,8 @@ class Pi0(model.BaseModel):
             config_name=config_name,
             state_indices=state_indices,
             rlt_cfg=rlt_cfg,
+            eval_sft_image_crop=eval_sft_image_crop,
+            vision_stem_wrap_with_parent=vision_stem_wrap_with_parent,
         )
         # PI0Pytorch.__init__ sets this globally so fp32 action/value heads
         # use TF32. OpenPI RL keeps this even though it un-compiles sample_actions.
@@ -538,7 +542,7 @@ class Pi0(model.BaseModel):
         Returns:
             actions: (B, action_horizon, action_dim)
         """
-        observation = model.preprocess_observation(observation, train=False)
+        observation = self._preprocess_eval_observation(observation)
 
         dt = -1.0 / num_steps
         B = observation.state.shape[0]
@@ -566,6 +570,16 @@ class Pi0(model.BaseModel):
 
         return x_t
 
+    def _preprocess_eval_observation(
+        self, observation: model.Observation
+    ) -> model.Observation:
+        """Apply the selected deterministic inference image preprocessing."""
+        if self.eval_sft_image_crop and self.training:
+            raise ValueError("eval_sft_image_crop requires model.eval().")
+        return model.preprocess_observation(
+            observation, train=False, deterministic_crop=self.eval_sft_image_crop
+        )
+
     def _init_rlinf_runtime(
         self,
         *,
@@ -575,6 +589,8 @@ class Pi0(model.BaseModel):
         config_name: str,
         state_indices: Sequence[int] | None,
         rlt_cfg: OpenPiPytorchRLTConfig | None,
+        eval_sft_image_crop: bool = False,
+        vision_stem_wrap_with_parent: bool = False,
     ) -> None:
         """Attach RLinf SFT knobs (num_steps, optional RLT) without a wrapper."""
         self.num_steps = num_steps
@@ -584,6 +600,8 @@ class Pi0(model.BaseModel):
         self.action_chunk = action_chunk
         self.config_name = config_name
         self.state_indices = list(state_indices) if state_indices else None
+        self.eval_sft_image_crop = eval_sft_image_crop
+        self.vision_stem_wrap_with_parent = vision_stem_wrap_with_parent
         # Workers (NFT, FSDP wrap) read ``model.config.num_steps``.
         self.config = SimpleNamespace(
             num_steps=num_steps,
@@ -592,6 +610,8 @@ class Pi0(model.BaseModel):
             action_dim=self.action_dim,
             action_env_dim=self.action_env_dim,
             config_name=config_name,
+            eval_sft_image_crop=eval_sft_image_crop,
+            vision_stem_wrap_with_parent=vision_stem_wrap_with_parent,
         )
         self.rlt_cfg = rlt_cfg or OpenPiPytorchRLTConfig()
         if self.rlt_cfg.use_rlt:
@@ -624,8 +644,8 @@ class Pi0(model.BaseModel):
         #   Block                  -- leftover attn+mlp is bf16 after RMSNorm
         #   Encoder1DBlock         -- SigLIP layer, all bf16
         #   Encoder                -- leftover post_layernorm is bf16
-        #   SigLIPViT              -- leftover pos_embedding is fp32 after
-        #                            stem / head wrap
+        #   SigLIPViT              -- fp32 position embedding, plus the stem when
+        #                            vision_stem_wrap_with_parent is enabled.
         names = [
             "Block",
             "Encoder1DBlock",
@@ -640,7 +660,7 @@ class Pi0(model.BaseModel):
 
     @property
     def _no_split_names(self) -> list[str] | None:
-        return [
+        names = [
             "action_in_proj",
             "action_out_proj",
             "state_proj",
@@ -648,9 +668,11 @@ class Pi0(model.BaseModel):
             "action_time_mlp_out",
             "time_mlp_in",
             "time_mlp_out",
-            "stem",  # fp32 patch embedding (OpenPI SiglipVisionEmbeddings)
             "head",  # bf16 multi-modal projector
         ]
+        if not self.vision_stem_wrap_with_parent:
+            names.append("stem")
+        return names
 
     def _mark_fsdp_wrap_names(self) -> None:
         """Mark modules so RLinf's FSDP lambda policy can find leaf projects."""
@@ -752,7 +774,11 @@ class Pi0(model.BaseModel):
         )
 
     def _reduce_sft_loss(
-        self, per_element_loss: torch.Tensor, use_action_chunk_loss: bool
+        self,
+        per_element_loss: torch.Tensor,
+        use_action_chunk_loss: bool,
+        action_loss_weights: list[float] | None = None,
+        action_step_weights: list[float] | None = None,
     ) -> torch.Tensor:
         """Mean flow-matching MSE, optionally restricted to the env action chunk.
 
@@ -772,6 +798,28 @@ class Pi0(model.BaseModel):
                 else per_element_loss.shape[-1]
             )
             per_element_loss = per_element_loss[:, :horizon, :env_dim]
+        if action_loss_weights is not None:
+            weights = per_element_loss.new_tensor(action_loss_weights)
+            if weights.numel() != per_element_loss.shape[-1]:
+                raise ValueError(
+                    "action_loss_weights must match the loss action dimension: "
+                    f"expected {per_element_loss.shape[-1]}, got {weights.numel()}."
+                )
+            if not torch.isfinite(weights).all() or (weights <= 0).any():
+                raise ValueError("action_loss_weights must be finite and positive.")
+            per_element_loss = per_element_loss * (weights / weights.mean())
+        if action_step_weights is not None:
+            weights = per_element_loss.new_tensor(action_step_weights)
+            if weights.numel() != per_element_loss.shape[1]:
+                raise ValueError(
+                    "action_step_weights must match the loss horizon: "
+                    f"expected {per_element_loss.shape[1]}, got {weights.numel()}."
+                )
+            if not torch.isfinite(weights).all() or (weights <= 0).any():
+                raise ValueError("action_step_weights must be finite and positive.")
+            per_element_loss = (
+                per_element_loss * (weights / weights.mean())[None, :, None]
+            )
         return per_element_loss.mean()
 
     def _sft_forward_with_rlt_prefix(
@@ -824,7 +872,12 @@ class Pi0(model.BaseModel):
         return loss, prefix_out, prefix_mask
 
     def sft_forward(
-        self, data: Any, use_action_chunk_loss: bool = False, **kwargs
+        self,
+        data: Any,
+        use_action_chunk_loss: bool = False,
+        action_loss_weights: list[float] | None = None,
+        action_step_weights: list[float] | None = None,
+        **kwargs,
     ) -> torch.Tensor | dict[str, torch.Tensor]:
         """Flow-matching SFT loss. Shared by SFT, DAgger, and PPO co-train."""
         del kwargs
@@ -835,12 +888,22 @@ class Pi0(model.BaseModel):
         actions = self._actions_to_device(actions)
         if not self.rlt_cfg.use_rlt:
             per_element_loss = self.compute_loss(observation, actions, train=True)
-            return self._reduce_sft_loss(per_element_loss, use_action_chunk_loss)
+            return self._reduce_sft_loss(
+                per_element_loss,
+                use_action_chunk_loss,
+                action_loss_weights,
+                action_step_weights,
+            )
 
         per_element_loss, prefix_output, prefix_mask = (
             self._sft_forward_with_rlt_prefix(observation, actions)
         )
-        vla_loss = self._reduce_sft_loss(per_element_loss, use_action_chunk_loss)
+        vla_loss = self._reduce_sft_loss(
+            per_element_loss,
+            use_action_chunk_loss,
+            action_loss_weights,
+            action_step_weights,
+        )
         rlt_loss, _ = self._rlt_forward(prefix_output, prefix_mask)
         return {
             "loss": rlt_loss + self.rlt_cfg.rlt_alpha * vla_loss,
