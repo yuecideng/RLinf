@@ -500,9 +500,9 @@ Stack Cube 环境通过 ``stack_cube_protocol: isaaclab`` 选择 episode 规则�
 
 修改权重会改变训练目标。下方已测结果使用默认权重和原有的成功、终止判据。CartPole 继续使用其任务原生 reward。
 
-此前的 :download:`原生 reward 对照记录 <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/native_reward_parity.json>` 包含针对旧 adapter 的 14 组 CPU 轨迹：在记录的源码快照下，74,700 个 reward 标量及已有 transition 字段均完全一致。当前 Gym 配置在两种 protocol 下均将 reward term 命名为 ``success``。这些检查验证 reward 和 episode contract，不代表新的 PPO 训练结果。
+此前的 `原生 reward 对照记录 <https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/native_reward_parity.json>`_ 包含针对旧 adapter 的 14 组 CPU 轨迹：在记录的源码快照下，74,700 个 reward 标量及已有 transition 字段均完全一致。当前 Gym 配置在两种 protocol 下均将 reward term 命名为 ``success``。这些检查验证 reward 和 episode contract，不代表新的 PPO 训练结果。
 
-:download:`Stack Cube reward 验证记录 <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/isaaclab_reward_alignment.json>` 包含 39 项通过的 CPU 检查，以及 8 个真实 GPU 场景的专家重放，每个场景执行 380 个控制步，结束时均满足稳定完成条件。将 3,040 个实测 reward 和 1,055 个边界样本与固定版本的 IsaacLab 源码对照，误差为零。IsaacLab 对照使用其原始 manager 和判定函数源码，以及轻量的配置与场景对象；完整 IsaacLab 运行时验证仍需先确认首次启动的 NVIDIA EULA。
+`Stack Cube reward 验证记录 <https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/isaaclab_reward_alignment.json>`_ 包含 39 项通过的 CPU 检查，以及 8 个真实 GPU 场景的专家重放，每个场景执行 380 个控制步，结束时均满足稳定完成条件。将 3,040 个实测 reward 和 1,055 个边界样本与固定版本的 IsaacLab 源码对照，误差为零。IsaacLab 对照使用其原始 manager 和判定函数源码，以及轻量的配置与场景对象；完整 IsaacLab 运行时验证仍需先确认首次启动的 NVIDIA EULA。
 
 使用确定性 SFT 裁剪训练的 checkpoint 应保持 ``actor.model.openpi.eval_sft_image_crop: true``。在此 recipe 中，该设置同时作用于 RL 评估、随机训练 rollout 和 actor logprob 重算；三条路径采用相同的前视图像裁剪，不使用数据增强 RNG，腕部图像保持原有取景。第一次 optimizer update 前，需确认 policy 权重保持一致、保存与重算的 logprob 一致，并重新验证选定 checkpoint 的闭环成功率。新增 value head 单独初始化。
 
@@ -622,13 +622,13 @@ PPO v5 从 v4 第 10 轮恢复，同时修改了奖励、成功后参与更新�
 
 新 PPO 阶段直接从修复加载精度后的 SFT 第 15,000 步 policy 开始。首份完整 checkpoint 在相同请求上取得 26/32，相对 SFT 新增两个成功案例，也有两个退步案例。训练在该完整 checkpoint 处停止，独立评估已结束。继续将 SFT 模型作为选定基线；新 PPO checkpoint 的成功计数没有提升。
 
-.. figure:: ../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/takeover_quality_curve.png
+.. figure:: https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/takeover_quality_curve.png
    :align: center
    :width: 90%
 
    接手后经审计的 validation 计数；新 PPO 阶段的轮数单独从零开始。
 
-通过 :download:`质量报告 <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/takeover_quality.json>` 和 :download:`曲线数据 <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/takeover_quality_curve.csv>` 查看 checkpoint、cohort、normalization 及审计 hash。本次实验的数据和请求与下文历史比较不同。32 个请求被重复用于选模，目前仅评估一个训练 seed，最终 100 个留出 test 请求尚未使用。本次示范数据和训练权重保存在本地，本次修改未公开发布这些资产。
+通过 `质量报告 <https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/takeover_quality.json>`_ 和 `曲线数据 <https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/takeover_quality_curve.csv>`_ 查看 checkpoint、cohort、normalization 及审计 hash。本次实验的数据和请求与下文历史比较不同。32 个请求被重复用于选模，目前仅评估一个训练 seed，最终 100 个留出 test 请求尚未使用。本次示范数据和训练权重保存在本地，本次修改未公开发布这些资产。
 
 Stack Cube 历史验证结果
 ----------------------------------------
@@ -656,13 +656,13 @@ Stack Cube 历史验证结果
 
 公开运行时逐集对照有 7 集改善、6 集退步；自定义运行时有 7 集改善、2 集退步。两种 native 二进制校验值不同，Torch 版本也不同，因此无法据此单独归因到某个依赖。公开运行时 SFT 独立评估为 7/27，自定义运行时为 8/27；生产验证的两个初始 SFT 均为 11/27。
 
-.. figure:: ../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/public_training_curve.png
+.. figure:: https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/public_training_curve.png
    :align: center
    :width: 90%
 
    公开运行时前 50 个 PPO epoch。训练内验证使用持续推进的 rollout RNG，上表使用单独的冷启动评估。
 
-可下载 :download:`实验摘要 <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/summary.json>`、:download:`公开版本逐集结果 <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/public_pinned_paired_episodes.csv>`、:download:`自定义运行时逐集结果 <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/custom_native_paired_episodes.csv>`、:download:`训练指标 <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/public_training_scalars.csv>` 和 :download:`迭代记录 <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/iteration_ledger.csv>`。配套 README 和校验文件说明其余文件及适用范围。
+可下载 `实验摘要 <https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/summary.json>`_、`公开版本逐集结果 <https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/public_pinned_paired_episodes.csv>`_、`自定义运行时逐集结果 <https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/custom_native_paired_episodes.csv>`_、`训练指标 <https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/public_training_scalars.csv>`_ 和 `迭代记录 <https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/iteration_ledger.csv>`_。`归档 README <https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/README.rst>`_ 和 `校验文件 <https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/SHA256SUMS>`_ 说明其余证据及适用范围。这些记录固定到原始源码快照，运行时不会加载它们。
 
 公开安装环境还单独使用 base 权重和 reference train statistics 完成了 45 次实际 Adam 更新的 CI recipe，用于验证 rollout、reward 与 actor update 接入；它与上面的 learned-policy 对照是不同运行。CPU 回归覆盖 95 个不同用例：模型环境通过 88 项，另外 7 项依赖 SDK 的用例已在仿真环境补跑通过。
 

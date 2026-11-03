@@ -731,9 +731,9 @@ Changing the weight changes the training objective. The measured results below
 use the default weight and the original success and termination predicates.
 CartPole continues to use its task's native reward.
 
-The earlier :download:`native reward comparison <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/native_reward_parity.json>` records 14 scripted CPU traces against the preceding adapter: 74,700 scalar rewards and the existing transition fields match exactly at the recorded source snapshot. The current Gym configuration names its reward term ``success`` in both protocols. These checks establish reward and episode contracts; they do not constitute a new PPO training result.
+The earlier `native reward comparison <https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/native_reward_parity.json>`_ records 14 scripted CPU traces against the preceding adapter: 74,700 scalar rewards and the existing transition fields match exactly at the recorded source snapshot. The current Gym configuration names its reward term ``success`` in both protocols. These checks establish reward and episode contracts; they do not constitute a new PPO training result.
 
-The :download:`Stack Cube reward validation <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/isaaclab_reward_alignment.json>` records 39 passing CPU cases and eight real GPU expert replays of 380 control steps each, all stable at completion. Comparing their 3,040 measured rewards and 1,055 boundary samples against the pinned IsaacLab source produced zero error. The IsaacLab comparison executes its original manager and predicate source with lightweight configuration and scene objects; a full IsaacLab runtime test remains pending first-launch NVIDIA EULA confirmation.
+The `Stack Cube reward validation <https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/isaaclab_reward_alignment.json>`_ records 39 passing CPU cases and eight real GPU expert replays of 380 control steps each, all stable at completion. Comparing their 3,040 measured rewards and 1,055 boundary samples against the pinned IsaacLab source produced zero error. The IsaacLab comparison executes its original manager and predicate source with lightweight configuration and scene objects; a full IsaacLab runtime test remains pending first-launch NVIDIA EULA confirmation.
 
 Keep ``actor.model.openpi.eval_sft_image_crop: true`` for checkpoints trained
 with the deterministic SFT crop. In this recipe it applies to RL evaluation,
@@ -950,14 +950,14 @@ relative to SFT on the same requests. Training stopped at that complete
 checkpoint and its independent evaluation finished. Keep the SFT model as the
 selected baseline; the fresh PPO result has not improved its success count.
 
-.. figure:: ../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/takeover_quality_curve.png
+.. figure:: https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/takeover_quality_curve.png
    :align: center
    :width: 90%
 
    Audited takeover validation counts. The fresh PPO stage starts its own iteration counter at zero.
 
-Inspect :download:`the quality report <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/takeover_quality.json>`
-and :download:`the curve data <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/takeover_quality_curve.csv>`
+Inspect `the quality report <https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/takeover_quality.json>`_
+and `the curve data <https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/takeover_quality_curve.csv>`_
 for checkpoint, cohort, normalization and audit hashes. This study uses new data
 and a different cohort from the historical comparison below. The 32 requests
 were reused for selection, one training seed was assessed, and the final
@@ -990,13 +990,13 @@ Both checkpoints contain 6,750 actual Adam updates across 198 optimizer states. 
 
 The public runtime's paired cases include seven gains and six losses; the custom runtime has seven gains and two losses. The native binaries have distinct checksums, and Torch also differs, so these experiments do not isolate which dependency accounts for the result difference. The public runtime's SFT standalone score is 7/27; the custom runtime's is 8/27. Both production baselines are 11/27.
 
-.. figure:: ../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/public_training_curve.png
+.. figure:: https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/public_training_curve.png
    :align: center
    :width: 90%
 
    First 50 public-runtime PPO epochs. Training-time evaluation uses a continuing rollout RNG; the table above uses separate cold evaluation.
 
-Download the :download:`experiment summary <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/summary.json>`, :download:`public paired episode results <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/public_pinned_paired_episodes.csv>`, :download:`custom-runtime paired episode results <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/custom_native_paired_episodes.csv>`, :download:`training scalars <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/public_training_scalars.csv>` and :download:`iteration ledger <../../../../../examples/embodiment/results/embodichain_stack_cube_pi05/iteration_ledger.csv>`. The accompanying README and checksums explain the remaining files and their scope.
+Download the `experiment summary <https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/summary.json>`_, `public paired episode results <https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/public_pinned_paired_episodes.csv>`_, `custom-runtime paired episode results <https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/custom_native_paired_episodes.csv>`_, `training scalars <https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/public_training_scalars.csv>`_ and `iteration ledger <https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/iteration_ledger.csv>`_. The `archived README <https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/README.rst>`_ and `checksums <https://raw.githubusercontent.com/yuecideng/RLinf/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05/SHA256SUMS>`_ describe the remaining evidence and its scope. These records are fixed to their original source snapshot; the runtime does not load them.
 
 The public installation's separate CI recipe completed 45 actual Adam updates using base weights and reference-train statistics. It establishes rollout, reward and actor-update integration; it is a different run from the learned-policy comparisons above. CPU regression coverage includes 95 distinct cases: 88 passed in the model environment, and seven SDK-dependent cases passed in the simulator environment.
 
