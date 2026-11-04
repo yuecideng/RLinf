@@ -173,16 +173,6 @@ class Checkpoint(Stateful):
                 for key, value in model_sd.items()
             }
             optim_sd = self._get_local_optim_state_dicts()
-
-            lr_sched_sd = [lr.state_dict() for lr in self.lr_schedulers]
-
-            out = {
-                "model": model_sd,
-                "optimizers": optim_sd,
-                "lr_schedulers": lr_sched_sd,
-                "fsdp_version": self.fsdp_version.value,
-                "rng": get_rng_state(),
-            }
         else:
             model_sd, optim_sd = get_state_dict(
                 model=self.model,
@@ -190,31 +180,27 @@ class Checkpoint(Stateful):
                 options=self.opts,
             )
 
-            lr_sched_sd = [lr.state_dict() for lr in self.lr_schedulers]
-
-            rng_state = get_rng_state()
-            if not self.legacy_rng_state:
-                all_rng_states = [rng_state]
-                if torch.distributed.is_initialized():
-                    all_rng_states = [None] * torch.distributed.get_world_size(
-                        self.process_group
-                    )
-                    torch.distributed.all_gather_object(
-                        all_rng_states, rng_state, group=self.process_group
-                    )
-                # DCP deduplicates replicated values. Give every rank the same
-                # complete set. Tuples are serialized as one DCP value, keeping
-                # the saved world size intact when loading with a new topology.
-                rng_state = tuple(all_rng_states)
-
-            out = {
-                "model": model_sd,
-                "optimizers": optim_sd,
-                "lr_schedulers": lr_sched_sd,
-                "fsdp_version": self.fsdp_version.value,
-                "rng": rng_state,
-            }
-        return out
+        lr_sched_sd = [lr.state_dict() for lr in self.lr_schedulers]
+        rng_state = get_rng_state()
+        if self.checkpoint_format != "local_shard" and not self.legacy_rng_state:
+            all_rng_states = [rng_state]
+            if torch.distributed.is_initialized():
+                all_rng_states = [None] * torch.distributed.get_world_size(
+                    self.process_group
+                )
+                torch.distributed.all_gather_object(
+                    all_rng_states, rng_state, group=self.process_group
+                )
+            # DCP deduplicates replicated values. The tuple keeps every rank's
+            # RNG and the saved world size together as one serialized value.
+            rng_state = tuple(all_rng_states)
+        return {
+            "model": model_sd,
+            "optimizers": optim_sd,
+            "lr_schedulers": lr_sched_sd,
+            "fsdp_version": self.fsdp_version.value,
+            "rng": rng_state,
+        }
 
     def load_state_dict(self, state):
         rng_state = state.get("rng")

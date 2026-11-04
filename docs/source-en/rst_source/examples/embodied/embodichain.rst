@@ -442,11 +442,17 @@ the base evaluation are verified, launch the smoke recipe on the two available
 GPUs. The experiment coordinator records this decision in the cohort manifest;
 it is separate from the immutable dataset/statistics audit.
 
+The formal SFT recipe owns the shared model and checkpoint settings. Its smoke
+variant overrides the short-run budget, dataset paths, and loader mode. SFT
+launches only actor workers; select their physical GPU ranks through
+``cluster.component_placement.actor``.
+
 .. code-block:: bash
 
    CUDA_VISIBLE_DEVICES="$STACK_SIM_GPU,$STACK_MODEL_GPU" python \
      examples/sft/train_vla_sft.py \
      --config-name embodichain_stack_cube_sft_openpi_pi05_smoke \
+     "cluster.component_placement.actor='$STACK_SIM_GPU,$STACK_MODEL_GPU'" \
      runner.logger.log_path="$STACK_RUN/training" \
      runner.logger.experiment_name=stack_cube_smoke actor.seed=0
 
@@ -624,6 +630,7 @@ stop after step 2,000 for validation:
    CUDA_VISIBLE_DEVICES="$STACK_SIM_GPU,$STACK_MODEL_GPU" python \
      examples/sft/train_vla_sft.py \
      --config-name embodichain_stack_cube_sft_openpi_pi05 \
+     "cluster.component_placement.actor='$STACK_SIM_GPU,$STACK_MODEL_GPU'" \
      runner.resume_dir="$STACK_FORMAL_CHECKPOINT" runner.max_steps=2000 \
      data.stateful_loader=true data.num_workers=4 actor.seed=0
 

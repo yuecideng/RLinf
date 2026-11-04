@@ -14,7 +14,7 @@ if [ "${STACK_CUBE_NCCL_SOCKET_FALLBACK:-1}" = 1 ]; then
 fi
 
 config_dir="$REPO_PATH/tests/e2e_tests/sft"
-config_name=embodichain_stack_cube_sft_openpi_pi05
+config_name=embodichain_stack_cube_sft_openpi_pi05_ci
 python "$REPO_PATH/examples/sft/train_vla_sft.py" \
     --config-path "$config_dir" --config-name "$config_name" \
     actor.fsdp_config.save_full_model_weights=false

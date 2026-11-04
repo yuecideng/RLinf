@@ -342,11 +342,14 @@ Statistics 命令输出 ``norm_stats.json`` 和包含源文件 hashes 的 manife
 
 确认相机、全部请求数据、两组各 8 集回放和 base 评估后，再使用两张空闲 GPU 启动 smoke recipe。实验协调者在 cohort manifest 中记录这一决定；它与不可变的数据和 statistics audit 分开管理。
 
+正式 SFT 配置统一定义模型和 checkpoint 设置，smoke 配置仅覆盖短跑预算、数据路径和 loader 模式。SFT 只启动 actor worker，通过 ``cluster.component_placement.actor`` 指定其物理 GPU rank。
+
 .. code-block:: bash
 
    CUDA_VISIBLE_DEVICES="$STACK_SIM_GPU,$STACK_MODEL_GPU" python \
      examples/sft/train_vla_sft.py \
      --config-name embodichain_stack_cube_sft_openpi_pi05_smoke \
+     "cluster.component_placement.actor='$STACK_SIM_GPU,$STACK_MODEL_GPU'" \
      runner.logger.log_path="$STACK_RUN/training" \
      runner.logger.experiment_name=stack_cube_smoke actor.seed=0
 
@@ -441,6 +444,7 @@ Statistics 命令输出 ``norm_stats.json`` 和包含源文件 hashes 的 manife
    CUDA_VISIBLE_DEVICES="$STACK_SIM_GPU,$STACK_MODEL_GPU" python \
      examples/sft/train_vla_sft.py \
      --config-name embodichain_stack_cube_sft_openpi_pi05 \
+     "cluster.component_placement.actor='$STACK_SIM_GPU,$STACK_MODEL_GPU'" \
      runner.resume_dir="$STACK_FORMAL_CHECKPOINT" runner.max_steps=2000 \
      data.stateful_loader=true data.num_workers=4 actor.seed=0
 

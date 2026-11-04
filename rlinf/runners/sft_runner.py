@@ -209,13 +209,12 @@ class SFTRunner:
             self.cfg.runner.logger.log_path,
             self.cfg.runner.logger.experiment_name,
         )
-        if is_best:
-            base_output_dir = os.path.join(checkpoint_root, "checkpoints/best_model")
-        else:
-            base_output_dir = os.path.join(
-                checkpoint_root,
-                f"checkpoints/global_step_{self.global_step}",
-            )
+        relative_path = (
+            "checkpoints/best_model"
+            if is_best
+            else f"checkpoints/global_step_{self.global_step}"
+        )
+        base_output_dir = os.path.join(checkpoint_root, relative_path)
         actor_save_path = os.path.join(base_output_dir, "actor")
         os.makedirs(actor_save_path, exist_ok=True)
         fsdp_config = self.cfg.actor.get("fsdp_config", {})

@@ -18,7 +18,6 @@ import os
 from typing import Any
 
 import torch
-from omegaconf import DictConfig
 
 from rlinf.config import SupportedModel
 from rlinf.hybrid_engines.fsdp.utils import generate_with_kv_cache
@@ -27,9 +26,6 @@ from rlinf.workers.sft.utils import vlm_extract_answer, vlm_normalize_text
 
 
 class FSDPVlmSftWorker(FSDPSftWorker):
-    def __init__(self, cfg: DictConfig):
-        super().__init__(cfg)
-
     def _save_data_state(self, save_path: str):
         state = {
             "data_epoch": self._data_epoch,

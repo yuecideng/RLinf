@@ -9,7 +9,7 @@ hydra:
 
 cluster:
   component_placement:
-    actor,env,rollout: ${oc.env:STACK_CUBE_SFT_PLACEMENT,0-1}
+    actor: ${oc.env:STACK_CUBE_SFT_PLACEMENT,0-1}
 
 runner:
   logger:

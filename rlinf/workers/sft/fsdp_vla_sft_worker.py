@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from omegaconf import DictConfig
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from rlinf.config import SupportedModel
@@ -28,19 +27,16 @@ from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
 
 class FSDPVlaSftWorker(FSDPSftWorker):
-    def __init__(self, cfg: DictConfig):
-        super().__init__(cfg)
-
     def init_worker(self) -> None:
         """Seed OpenPI initialization together and training streams per rank."""
         seed = int(self.cfg.actor.seed)
-        if SupportedModel(self.cfg.actor.model.model_type) != SupportedModel.OPENPI:
-            seed_everything(seed + self._rank)
-            super().init_worker()
-            return
-        seed_everything(seed)
+        is_openpi = (
+            SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.OPENPI
+        )
+        seed_everything(seed if is_openpi else seed + self._rank)
         super().init_worker()
-        seed_everything(seed + self._rank)
+        if is_openpi:
+            seed_everything(seed + self._rank)
 
     def build_dataloader(self, data_paths: Any, eval_dataset: bool = False):
         model_type = SupportedModel(self.cfg.actor.model.model_type)
