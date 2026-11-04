@@ -216,7 +216,7 @@ EmbodiChain CartPole 也被 embodied e2e 配置覆盖，位于
      --revision 22c30e5b34f9e7ab738b1b34fc2fc5ecfe2d28f0 \
      --local-dir "$PI05_BASE_MODEL"
 
-安装器将 EmbodiChain 固定到 commit ``d2251d2303112f767c016c7c88be40637791f785``，DexSim 固定到 ``0.5.1rc1``。该 EmbodiChain main 快照的版本号为 0.3.2。此 Torch 配置使用 Python 3.11；运行前设置仓库、输出与模型路径。GPU 变量表示物理 rank。
+安装器将 EmbodiChain 固定到 commit ``1f53f7419f3d5f39382b158807b1fa39a9b0f101``，DexSim 固定到 ``0.5.1rc1``。该 commit 位于 ``yuecideng/EmbodiChain``，基于 main ``16c429bc48ba0bc09e2256be26d8994fcb3b5e0b``，包含 `EmbodiChain PR #985 <https://github.com/DexForce/EmbodiChain/pull/985>`_ 中的共用控制器改动，版本号为 0.3.2。此 Torch 配置使用 Python 3.11；运行前设置仓库、输出与模型路径。GPU 变量表示物理 rank。
 
 从固定的公开资产版本准备 Panda URDF 与 mesh。准备后的副本包含控制 TCP 和独立驱动的两个手指。
 
@@ -363,38 +363,33 @@ Verifier 创建 32 个训练环境和 27 个评估环境，检查 actor 到 roll
 
 验证程序检查导出权重及 DCP 中 model、optimizer、scheduler、RNG 的存储，再测量 policy 成功率。汇报 validation 分数时，同时记录训练退出状态和 checkpoint 的实际更新次数。两次更新的 SFT 恢复测试与单轮 PPO 集成测试位于 ``tests/e2e_tests``，直接继承正式 recipe，并在测试配置中定义短预算。
 
-EmbodiChain 0.3.2 的配置能力
+专家与 RL 环境配置
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-新增原生 RL deployment 时，可以复用 SDK 的配置化 Gym host。当前固定 main 快照支持 ``rl_task`` 条件、action term、observation term、reward 和 reset event。已发布的 ``v0.3.2`` tag 早于配置化 manipulation RL 改动，应使用核对过的 commit，不能仅根据版本号判断支持情况。
+Stack Cube 的 RL deployment 使用 EmbodiChain 配置化 Gym host。Task Program 专家与 RL deployment 共享 ``scene.yaml`` 和同一 Panda embodiment，包括两路已标定相机。已发布的 ``v0.3.2`` tag 早于配置化 manipulation RL host；请使用安装器固定的 commit，该版本也包含共用的子步控制器和专家执行选项。
 
-Task Program 演示与 RL 使用独立 deployment。SDK 会拒绝同时声明 ``task_program`` 和 ``rl_task`` 的配置；两个 deployment 可以选择相同的物理环境、机器人和相机组件。
-
-.. list-table:: 原生配置能力与 Stack Cube 迁移
+.. list-table:: Deployment 职责
    :header-rows: 1
 
-   * - 范围
-     - 当前 SDK 能力
-     - Stack Cube 所需工作
-   * - 场景与相机
-     - Environment、embodiment 组件
-     - 共享资产与已标定的相机声明。
-   * - 动作
-     - ``RelativeEefPoseAction``、``ParallelGripperAction``
-     - 对照已保存 policy 验证裁剪、控制频率和 DLS 语义。
-   * - 观测
-     - 配置化 observation manager term
-     - 保持 RGB 映射和 8 维 EEF/Euler/finger state 接口。
-   * - Reward 与终止
-     - Reward term 与 ``RLTaskCfg`` success/failure/truncation 条件
-     - 补充可复用的堆叠、夹爪释放和连续 20 步稳定条件。
-   * - Reset
-     - 配置化 reset event 与选定行状态
-     - 保留固定请求的来源记录和接触缓存初始化。
+   * - Deployment
+     - 配置
+     - 执行方式
+   * - 正式专家
+     - ``task.panda.formal_expert.yaml``
+     - Task Program 规划关节目标；``expert_trajectory.use_action_manager: true`` 通过配置的 action term 执行。
+   * - RL
+     - ``task.panda.rl.yaml``
+     - 原生 ``EmbodiedEnv`` 使用 ``rl_task`` success/failure 条件和配置的 action、observation、reward、reset term。
 
-当前 Stack Cube adapter 仍负责自定义控制器、固定请求 reset 和稳定性测量。选择 SDK 0.3.2 不会自动迁移这些行为。SDK 相对动作会裁剪归一化输入并执行其控制步；当前 adapter 接受未裁剪的 policy 增量，在每个物理子步更新 DLS 目标。替换 adapter 或沿用旧 checkpoint 作为质量证据前，应先比较这些接口契约。
+SDK 拒绝同时声明 ``task_program`` 和 ``rl_task`` 的 deployment。RLinf adapter 负责请求 cohort 轮换、action chunk 的 episode 边界及训练指标。原生 reset event 负责固定初态放置和接触缓存初始化，仍要求全批量同步 reset。原生 condition 测量物理堆叠状态，每个控制步更新一次连续 20 步的稳定计数，并缓存结果。
+
+两个 deployment 均使用 ``eef_pose.relative_substep_dls@1``，平移与旋转 scale 为 0.5，damping 为 0.01，相对请求不裁剪。每个 20 Hz 控制间隔保持同一末端目标，在其五个物理子步前分别重算 DLS。二值夹爪仅在命令为正时打开，0 表示关闭。专家执行保留规划目标的精确 FK pose，并记录等价的 7 维相对命令。RGB 映射与 8 维 EEF/Euler/带符号手指状态在采集和 policy 评估中保持一致。
 
 实测结果
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-`不可变实验归档 <https://github.com/yuecideng/RLinf/tree/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05>`_ 保存早期 checkpoint 的源码版本、validation 计数、曲线和校验和。这些实验使用其记录的数据、相机与 SDK 快照，不能为新采集的数据或迁移后的原生 RL deployment 提供准入证明。修改配置或执行行为后，重新记录闭环验证结果。
+`不可变实验归档 <https://github.com/yuecideng/RLinf/tree/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05>`_ 保存早期 checkpoint 的源码版本、validation 计数、曲线和校验和。这些实验使用其记录的数据、相机与 SDK 快照，不能为新采集的数据或迁移后的原生 RL deployment 提供准入证明。
+
+迁移验证在 RTX PRO 5000 72 GB 上以 batch 1 和 8 分别回放相同动作 450 步，两种实现的原始 RGB、状态、奖励、termination、truncation 和稳定性完全一致。实际 Task Program 采集的 600 步动作、状态、物理测量与两路原始 RGB 也完全一致。该请求在两种实现中均于第 563 步稳定完成，均未通过保持不变的 450 步验收门槛。
+
+独立集成测试在物理 GPU 5、6 上采集两条 450 步轨迹，执行一次 PPO 更新并保存 checkpoint。198 个 Adam 状态均到达 step 1，477 个冻结张量保持一致，675 个导出张量均为有限值。这些检查验证行为和接口兼容性；新的训练仍需重新通过固定 cohort 的 learned-policy 准入验证。

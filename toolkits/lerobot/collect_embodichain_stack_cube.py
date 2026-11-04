@@ -341,6 +341,8 @@ def main() -> None:
     for source in [
         Path(__file__),
         Path(stack_cube.__file__),
+        Path(__file__).resolve().parents[2]
+        / "rlinf/envs/sim/embodichain/stack_cube_terms.py",
         Path(__file__).with_name("prepare_stack_cube_data.py"),
     ]:
         target = args.output / "source_snapshot" / source.name
@@ -383,7 +385,12 @@ def main() -> None:
     execute_init_hooks()
     raw = load_config(task)
     cfg = config_to_cfg(
-        raw, manager_modules=get_manager_modules(), source_path=str(task)
+        raw,
+        manager_modules=[
+            *get_manager_modules(),
+            "rlinf.envs.sim.embodichain.stack_cube_terms",
+        ],
+        source_path=str(task),
     )
     cfg.robot.fpath = str(asset.resolve())
     cfg.sim_cfg.headless = True

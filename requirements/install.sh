@@ -2523,8 +2523,9 @@ EOF
                 MODEL=""
                 create_and_sync_venv
                 install_common_embodied_deps
-                install_embodichain_env d2251d2303112f767c016c7c88be40637791f785 \
-                    "$SCRIPT_DIR/embodied/envs/embodichain_openpi.txt"
+                install_embodichain_env 1f53f7419f3d5f39382b158807b1fa39a9b0f101 \
+                    "$SCRIPT_DIR/embodied/envs/embodichain_openpi.txt" \
+                    https://github.com/yuecideng/EmbodiChain.git
                 uv pip check
             )
             echo "[install.sh] EmbodiChain env interpreter: $simulator_venv/bin/python"
@@ -3909,6 +3910,7 @@ install_frankasim_env() {
 install_embodichain_env() {
     local revision="${1:-}"
     local requirements="${2:-}"
+    local repository="${3:-https://github.com/DexForce/EmbodiChain.git}"
     if [ -n "$revision" ]; then
         local source_dir="${EMBODICHAIN_INSTALL_PATH:-$VIRTUAL_ENV/embodichain-source}"
         local existing=0
@@ -3922,7 +3924,7 @@ install_embodichain_env() {
             fi
         fi
         source_dir=$(clone_or_reuse_repo EMBODICHAIN_INSTALL_PATH "$source_dir" \
-            https://github.com/DexForce/EmbodiChain.git --no-checkout)
+            "$repository" --no-checkout)
         if [ "$existing" -eq 0 ]; then
             git -C "$source_dir" fetch --depth 1 origin "$revision"
             git -C "$source_dir" checkout --detach "$revision"

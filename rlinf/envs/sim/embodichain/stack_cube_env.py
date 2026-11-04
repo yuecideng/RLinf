@@ -43,24 +43,31 @@ class StackCubeEnv(EmbodiChainEnv):
         total_num_processes: int,
         worker_info: Any,
     ) -> None:
+        self._stack_native = False
         self._stack_ppo = False
         self._stack_requests = []
         self._stack_request_index = 0
         super().__init__(cfg, num_envs, seed_offset, total_num_processes, worker_info)
+        self._native_done = torch.zeros(
+            self.num_envs, dtype=torch.bool, device=self.device
+        )
 
     def _build_env(self):
         gym_config_path = _resolve_gym_config_path(
             str(_cfg_get(self.cfg, "gym_config_path"))
         )
+        from embodichain.utils.utility import load_config
+
         from rlinf.envs.sim.embodichain.stack_cube import (
             STACK_PROMPT,
             build_stack_cube_env,
         )
 
+        self._stack_native = bool(load_config(gym_config_path).get("rl_task"))
         protocol = _cfg_get(self.cfg, "stack_cube_protocol", "evaluation")
         if protocol not in {"evaluation", "isaaclab"}:
             raise ValueError("Stack Cube protocol must be evaluation or isaaclab.")
-        self._stack_ppo = protocol == "isaaclab"
+        self._stack_ppo = self._stack_native or protocol == "isaaclab"
         if self.num_envs != 1 and not self._stack_ppo:
             raise ValueError(
                 "Stack Cube frozen-manifest evaluation requires num_envs=1."
@@ -85,6 +92,8 @@ class StackCubeEnv(EmbodiChainEnv):
         if self._stack_ppo:
             self._stack_request_index = self.seed_offset * self.num_envs
         self.task_prompt = STACK_PROMPT
+        if self._stack_native:
+            return self._build_native_env(gym_config_path)
         env = build_stack_cube_env(
             _cfg_get(self.cfg, "panda_urdf"),
             seed=self.seed,
@@ -98,8 +107,46 @@ class StackCubeEnv(EmbodiChainEnv):
         env.action_space = gym.spaces.Box(-np.inf, np.inf, shape=(7,), dtype=np.float32)
         return env
 
+    def _build_native_env(self, gym_config_path: Path):
+        from embodichain.lab.gym.utils.gym_utils import (
+            config_to_cfg,
+            get_manager_modules,
+        )
+        from embodichain.lab.gym.utils.registration import build_env
+        from embodichain.utils.utility import load_config
+
+        native_cfg = config_to_cfg(
+            load_config(gym_config_path),
+            manager_modules=[
+                *get_manager_modules(),
+                "rlinf.envs.sim.embodichain.stack_cube_terms",
+            ],
+            source_path=str(gym_config_path),
+        )
+        native_cfg.robot.fpath = str(
+            Path(_cfg_get(self.cfg, "panda_urdf")).resolve(strict=True)
+        )
+        native_cfg.num_envs = self.num_envs
+        native_cfg.max_episode_steps = self.max_episode_steps
+        native_cfg.ignore_terminations = self.ignore_terminations
+        native_cfg.seed = self.seed
+        native_cfg.sim_cfg.device = str(self.device)
+        native_cfg.sim_cfg.headless = bool(_cfg_get(self.cfg, "headless", True))
+        native_cfg.sim_cfg.gpu_id = 0
+        native_cfg.filter_dataset_saving = True
+        torch.set_float32_matmul_precision("highest")
+        return build_env(load_config(gym_config_path)["id"], base_env_cfg=native_cfg)
+
     def _wrap_obs(self, raw_obs: dict[str, Any]) -> dict[str, Any]:
-        return self.env.policy_observation(raw_obs)
+        if not self._stack_native:
+            return self.env.policy_observation(raw_obs)
+        wrapped = {
+            "states": raw_obs["robot"]["eef_state"].clone(),
+            "task_descriptions": [self.task_prompt] * self.num_envs,
+        }
+        for uid, key in [("front", "main_images"), ("wrist", "wrist_images")]:
+            wrapped[key] = self._get_sensor_image(raw_obs, uid).clone()
+        return wrapped
 
     def reset(
         self,
@@ -147,9 +194,16 @@ class StackCubeEnv(EmbodiChainEnv):
                 for row in range(self.num_envs)
             ]
             self._stack_request_index += self.num_envs * self.total_num_processes
-        raw_obs, infos = self.env.reset_requests(
-            requests, initial_states=initial_states
-        )
+        if self._stack_native:
+            self.env.event_manager.get_functor_cfg("requests").func.set_requests(
+                requests, initial_states
+            )
+            raw_obs, infos = self.env.reset(seed=int(requests[0]["seed"]))
+            self._native_done.zero_()
+        else:
+            raw_obs, infos = self.env.reset_requests(
+                requests, initial_states=initial_states
+            )
         infos = dict(
             infos,
             reset_request_ids=[request["request_id"] for request in requests],
@@ -177,13 +231,32 @@ class StackCubeEnv(EmbodiChainEnv):
             raise ValueError("Stack Cube actions must contain only finite values.")
         if (self._elapsed_steps >= self.max_episode_steps).any():
             raise RuntimeError("Reset Stack Cube after its terminal transition.")
-        raw_obs, rewards, terminations, truncations, step_info = self.env.step_relative(
-            actions
-        )
-        metrics = step_info["metrics"]["stack_metrics"]
-        stable = step_info["metrics"]["stable_success"]
+        if self._stack_native:
+            raw_obs, rewards, terminations, truncations, step_info = self.env.step(
+                actions
+            )
+            metrics = step_info["task_outcome"]["conditions"]["success.stacked"][
+                "metrics"
+            ]
+            stable = metrics["stable_success"]
+            if not self.ignore_terminations:
+                terminations = (
+                    metrics["baseline_success"] | metrics["failure"]
+                ) & ~self._native_done
+                self._native_done |= terminations
+        else:
+            raw_obs, rewards, terminations, truncations, step_info = (
+                self.env.step_relative(actions)
+            )
+            metrics = step_info["metrics"]["stack_metrics"]
+            stable = step_info["metrics"]["stable_success"]
         self._elapsed_steps += 1
         step_metrics = {
+            **(
+                {"task_outcome": step_info["task_outcome"]}
+                if self._stack_native
+                else {}
+            ),
             "success": stable,
             "stack_metrics": metrics,
             "rewards": step_info["rewards"],

@@ -230,9 +230,11 @@ The following setup selects Torch 2.7.1 with CUDA 12.8 and the public base weigh
      --local-dir "$PI05_BASE_MODEL"
 
 The installer pins EmbodiChain to commit
-``d2251d2303112f767c016c7c88be40637791f785`` and DexSim to ``0.5.1rc1``.
-This EmbodiChain main snapshot reports version 0.3.2. Use Python 3.11 for this
-Torch recipe. Set the repository, output and model paths before running the
+``1f53f7419f3d5f39382b158807b1fa39a9b0f101`` and DexSim to ``0.5.1rc1``.
+This commit in ``yuecideng/EmbodiChain`` is based on main
+``16c429bc48ba0bc09e2256be26d8994fcb3b5e0b`` and contains the shared-controller
+changes in `EmbodiChain PR #985 <https://github.com/DexForce/EmbodiChain/pull/985>`_.
+It reports version 0.3.2. Use Python 3.11 for this Torch recipe. Set the repository, output and model paths before running the
 commands. The GPU variables below identify physical ranks.
 
 Prepare the Panda URDF and meshes from the pinned public asset source. The
@@ -433,47 +435,42 @@ checkpoint update count as well as the validation score. The two-update SFT
 resume test and one-epoch PPO integration test remain under ``tests/e2e_tests``;
 they inherit the formal recipes and keep their short budgets in the test configs.
 
-Configuration Support in EmbodiChain 0.3.2
+Configure the Expert and RL Environments
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-For a new native RL deployment, reuse the SDK's configured Gym host. The pinned
-main snapshot supports ``rl_task`` conditions, action terms, observation terms,
-rewards and reset events. The published ``v0.3.2`` tag predates the
-configuration-defined manipulation RL change; use the inspected commit rather
-than relying on the version string alone.
+Stack Cube uses EmbodiChain's configured Gym host for RL. The Task Program
+expert and RL deployments share ``scene.yaml`` and the same Panda embodiment,
+including both calibrated cameras. The published ``v0.3.2`` tag predates the
+configured manipulation RL host; use the installer-pinned commit, which also
+adds the shared substep controller and expert execution option.
 
-Keep the Task Program demonstration deployment and the RL deployment separate.
-The SDK rejects a deployment that combines ``task_program`` and ``rl_task``.
-Both can select the same physical environment and robot/sensor components.
-
-.. list-table:: Native Configuration and Stack Cube Migration
+.. list-table:: Deployment Ownership
    :header-rows: 1
 
-   * - Area
-     - Current SDK Capability
-     - Stack Cube Work Required
-   * - Scene and cameras
-     - Environment and embodiment components
-     - Share the same assets and calibrated camera declarations.
-   * - Actions
-     - ``RelativeEefPoseAction`` and ``ParallelGripperAction``
-     - Validate clipping, control frequency and DLS semantics against the saved policy.
-   * - Observations
-     - Configured observation manager terms
-     - Preserve RGB mapping and the 8D EEF/Euler/finger state contract.
-   * - Reward and termination
-     - Reward terms and ``RLTaskCfg`` success/failure/truncation conditions
-     - Supply reusable stacking, release and 20-step stability conditions.
-   * - Reset
-     - Configured reset events and selected-row state
-     - Preserve frozen request provenance and contact-cache initialization.
+   * - Deployment
+     - Configuration
+     - Execution
+   * - Formal expert
+     - ``task.panda.formal_expert.yaml``
+     - Task Program plans joint targets; ``expert_trajectory.use_action_manager: true`` executes them through the configured action terms.
+   * - RL
+     - ``task.panda.rl.yaml``
+     - Native ``EmbodiedEnv`` uses ``rl_task`` success/failure conditions and configured action, observation, reward and reset terms.
 
-The current Stack Cube adapter still owns its custom controller, frozen-request
-reset and stability measurements. Selecting SDK 0.3.2 does not migrate these
-behaviors. The SDK's relative action clips normalized inputs and applies its
-own controller step; the current adapter accepts unbounded policy deltas and
-updates DLS targets on every physics substep. Compare these contracts before
-replacing the adapter or reusing old checkpoints as quality evidence.
+The SDK rejects a deployment that combines ``task_program`` and ``rl_task``.
+The RLinf adapter owns request-cohort rotation, action-chunk episode boundaries
+and training metrics. The native reset event owns frozen-pose placement and
+contact-cache initialization; full-batch synchronized resets remain required.
+The native condition measures physical stacking and caches the consecutive
+20-step stability count once per control step.
+
+Both deployments use ``eef_pose.relative_substep_dls@1`` with translation and
+rotation scales of 0.5 and damping 0.01. Relative requests remain unbounded.
+The target is held for one 20 Hz control interval, and DLS is recomputed before
+each of its five physics substeps. The binary gripper opens only for positive
+commands; zero closes it. Expert execution retains the exact planned FK target
+and records its equivalent 7D relative command. RGB mapping and the 8D
+EEF/Euler/signed-finger state match collection and policy evaluation.
 
 Measured Results
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -481,5 +478,17 @@ Measured Results
 The `immutable experiment archive <https://github.com/yuecideng/RLinf/tree/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05>`_ retains earlier
 checkpoints' source identities, validation counts, curves and checksums. Those
 runs used their recorded datasets, cameras and SDK snapshots. They do not
-qualify a fresh collection or a migrated native RL deployment. Record new
-closed-loop evidence after changing either configuration or execution behavior.
+qualify a fresh collection or a migrated native RL deployment.
+
+Migration checks on an RTX PRO 5000 72 GB replayed identical actions for 450
+steps at batches 1 and 8. Both implementations produced identical raw RGB,
+states, rewards, termination, truncation and stability. An actual 600-step
+Task Program collection also matched actions, states, physical measurements
+and both raw RGB streams exactly. That request stabilized at step 563 in both
+implementations and failed the unchanged 450-step acceptance threshold.
+
+A separate integration run on physical GPUs 5 and 6 collected two 450-step
+rollouts, performed one PPO update and saved a checkpoint. All 198 Adam states
+reached step 1; 477 frozen tensors stayed equal, and all 675 exported tensors
+were finite. These checks establish behavior and interface compatibility.
+Re-run fixed-cohort learned-policy qualification before a new training run.

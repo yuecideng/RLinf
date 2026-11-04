@@ -1,9 +1,8 @@
 # Paths identify the verified asset and frozen reset cohort used by this run.
 env_type: embodichain
-gym_config_path: rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task.panda.yaml
+gym_config_path: rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task.panda.rl.yaml
 panda_urdf: ${oc.env:STACK_CUBE_PANDA_URDF}
 request_manifest: ${oc.env:STACK_CUBE_PPO_TRAIN_REQUESTS}
-stack_cube_protocol: isaaclab
 
 headless: true
 sim_device: cuda

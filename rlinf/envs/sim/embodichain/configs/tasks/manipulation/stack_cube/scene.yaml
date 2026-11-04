@@ -1,9 +1,4 @@
-environment_id: rlinf_stack_cube
-physics: default
-max_episodes: 1
-max_episode_steps: 600
-num_envs: 1
-arena_space: 2.5
+scene_id: rlinf_stack_cube
 simulation:
   light:
     direct:
@@ -141,14 +136,3 @@ simulation:
         min_velocity_iters: 8
   rigid_object_group: []
   articulation: []
-env:
-  target_control_frequency: 20
-  rewards:
-    success:
-      func: success_reward
-      mode: add
-      # IsaacLab applies weight 20 * step_dt 0.05; EmbodiChain uses weight directly.
-      weight: 1.0
-      params: {}
-  events: {}
-  dataset: {}

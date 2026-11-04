@@ -23,18 +23,10 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import torch
 from embodichain.lab.gym.envs import EmbodiedEnv
-from embodichain.lab.gym.envs.types import ControllerAction
-from scipy.spatial.transform import Rotation
 
 if TYPE_CHECKING:
     from embodichain.lab.gym.envs.embodied_env import EmbodiedEnvCfg
     from embodichain.lab.sim.types import EnvObs
-
-
-def rotation_vector(matrix: torch.Tensor) -> torch.Tensor:
-    """Return the shortest rotation vector for batched rotation matrices."""
-    vectors = Rotation.from_matrix(matrix.detach().cpu().numpy()).as_rotvec()
-    return torch.as_tensor(vectors, dtype=matrix.dtype, device=matrix.device)
 
 
 class StackCubeExpertEnv(EmbodiedEnv):
@@ -49,9 +41,6 @@ class StackCubeExpertEnv(EmbodiedEnv):
     def __init__(
         self, cfg: EmbodiedEnvCfg, *, protocol: str | None = None, **kwargs: Any
     ) -> None:
-        self._eef_target = None
-        self.last_relative_action = None
-        self._relative_command = None
         self._stack_protocol = protocol
         self._stack_task_state = None
         super().__init__(cfg, **kwargs)
@@ -82,9 +71,6 @@ class StackCubeExpertEnv(EmbodiedEnv):
             raise NotImplementedError(
                 "Stack Cube requires synchronized full-batch reset."
             )
-        self._eef_target = None
-        self.last_relative_action = None
-        self._relative_command = None
         if self._stack_task_state is not None:
             self._reset_stack_task_state()
         return super().reset(*args, **kwargs)
@@ -194,65 +180,9 @@ class StackCubeExpertEnv(EmbodiedEnv):
         """
         if len(requests) != self.num_envs:
             raise ValueError("A synchronized reset requires one request per scene.")
-        if initial_states is not None and len(initial_states) != self.num_envs:
-            raise ValueError("Saved initial states must match the scene count.")
-        if any(request.get("visual") is not None for request in requests):
-            raise ValueError("Visual OOD reset is not implemented.")
-        self.reset(seed=int(requests[0]["seed"]))
-        qpos = self.robot.get_qpos().clone()
-        desired_poses = {}
-        for uid in ("blue", "red", "green"):
-            obj = self.sim.get_rigid_object(uid)
-            pose = obj.get_local_pose(to_matrix=True).clone()
-            if initial_states is not None:
-                pose[:] = torch.as_tensor(
-                    [state["object_poses"][uid] for state in initial_states],
-                    device=self.device,
-                )
-            else:
-                pose[:, :3, 3] = torch.as_tensor(
-                    [request["objects"][uid]["position"] for request in requests],
-                    device=self.device,
-                )
-                angles = np.asarray(
-                    [request["objects"][uid]["yaw_rad"] for request in requests]
-                ).reshape(-1, 1)
-                pose[:, :3, :3] = torch.as_tensor(
-                    Rotation.from_euler("z", angles).as_matrix(), device=self.device
-                )
-            desired_poses[uid] = pose
-            lifted = pose.clone()
-            lifted[:, 2, 3] += 0.1
-            obj.set_local_pose(lifted)
-            obj.clear_dynamics()
-        # Separating contacts for one tick invalidates cached friction anchors.
-        self.sim.update(self.physics_dt, 1, render_final_step=False)
-        for uid, pose in desired_poses.items():
-            obj = self.sim.get_rigid_object(uid)
-            obj.set_local_pose(pose)
-            obj.clear_dynamics()
-        if initial_states is not None:
-            qpos[:] = torch.as_tensor(
-                [state["qpos"] for state in initial_states], device=self.device
-            )
-        else:
-            qpos[:, self.arm_ids] += torch.as_tensor(
-                [request["arm_joint_offsets"] for request in requests],
-                device=self.device,
-            )
-        limits = self.robot.get_qpos_limits()
-        if (
-            not torch.isfinite(qpos).all()
-            or torch.any(qpos < limits[..., 0])
-            or torch.any(qpos > limits[..., 1])
-        ):
-            raise ValueError("Requested robot initial state violates joint limits.")
-        self.robot.set_qpos(qpos, target=False)
-        self.robot.set_qpos(qpos, target=True)
-        self.robot.clear_dynamics()
-        with self.sim.render_frame(capture_camera_images=True):
-            observation = self.get_obs()
-        return observation, {}
+        resetter = self.event_manager.get_functor_cfg("requests").func
+        resetter.set_requests(requests, initial_states)
+        return self.reset(seed=int(requests[0]["seed"]))
 
     def policy_observation(self, raw_obs: dict) -> dict:
         """Return two real RGB views and Euler EEF state without expert inputs."""
@@ -278,89 +208,12 @@ class StackCubeExpertEnv(EmbodiedEnv):
         command = torch.as_tensor(action, device=self.device, dtype=torch.float32)
         if command.shape != (self.num_envs, 7) or not torch.isfinite(command).all():
             raise ValueError("Stack Cube actions must be finite [num_envs, 7] tensors.")
-        self._relative_command = command
-        try:
-            return self.step(ControllerAction(self.robot.get_qpos().clone()))
-        finally:
-            self._relative_command = None
+        return self.step(command)
 
-    def _step_action(self, action):
-        current = self.robot.compute_fk(
-            self.robot.get_qpos()[:, self.arm_ids], name="arm", to_matrix=True
-        )
-        if isinstance(action, ControllerAction) and self._relative_command is None:
-            planned = action.value
-            if not isinstance(planned, torch.Tensor):
-                planned = planned["qpos"]
-            target = self.robot.compute_fk(
-                planned[:, self.arm_ids], name="arm", to_matrix=True
-            )
-            delta = rotation_vector(target[:, :3, :3] @ current[:, :3, :3].mT)
-            gripper = torch.where(
-                planned[:, self.hand_ids].mean(-1, keepdim=True) > 0.02,
-                1.0,
-                -1.0,
-            )
-            command = torch.cat(
-                ((target[:, :3, 3] - current[:, :3, 3]) / 0.5, delta / 0.5, gripper),
-                dim=-1,
-            )
-        else:
-            command = self._relative_command
-            if command is None:
-                command = torch.as_tensor(
-                    action, device=self.device, dtype=torch.float32
-                )
-            if command.shape != (self.num_envs, 7) or not torch.isfinite(command).all():
-                raise ValueError(
-                    "Stack Cube actions must be finite [num_envs, 7] tensors."
-                )
-            target = current.clone()
-            target[:, :3, 3] += command[:, :3] * 0.5
-            delta = Rotation.from_rotvec((command[:, 3:6] * 0.5).cpu().numpy())
-            rotation = torch.as_tensor(
-                delta.as_matrix(), device=self.device, dtype=current.dtype
-            )
-            target[:, :3, :3] = rotation @ current[:, :3, :3]
-        self._eef_target = target
-        self.last_relative_action = command.detach().clone()
-        # The base expert buffer retains the original joint target for provenance.
-        return action.value if isinstance(action, ControllerAction) else command
-
-    def _advance_physics(self) -> None:
-        if self._eef_target is None:
-            return super()._advance_physics()
-        for _ in range(self.cfg.sim_steps_per_control):
-            current = self.robot.compute_fk(
-                self.robot.get_qpos()[:, self.arm_ids], name="arm", to_matrix=True
-            )
-            qpos = self.robot.get_qpos().clone()
-            error = torch.cat(
-                (
-                    self._eef_target[:, :3, 3] - current[:, :3, 3],
-                    rotation_vector(
-                        self._eef_target[:, :3, :3] @ current[:, :3, :3].mT
-                    ),
-                ),
-                dim=-1,
-            )
-            jacobian = self.robot.compute_jacobian(
-                qpos, end_link_name="panda_tcp", root_link_name="panda_link0"
-            )
-            identity = torch.eye(6, device=self.device, dtype=qpos.dtype)
-            dq = jacobian.mT @ torch.linalg.solve(
-                jacobian @ jacobian.mT + 0.01**2 * identity, error.unsqueeze(-1)
-            )
-            limits = self.robot.get_qpos_limits()[:, self.arm_ids]
-            targets = (qpos[:, self.arm_ids] + dq.squeeze(-1)).clamp(
-                limits[..., 0], limits[..., 1]
-            )
-            self.robot.set_qpos(targets, joint_ids=self.arm_ids)
-            fingers = torch.where(self.last_relative_action[:, -1:] > 0, 0.04, 0.0)
-            self.robot.set_qpos(
-                fingers.expand(-1, len(self.hand_ids)), joint_ids=self.hand_ids
-            )
-            self.sim.update(self.physics_dt, 1, render_final_step=False)
+    @property
+    def last_relative_action(self) -> torch.Tensor:
+        """Return the most recent expert or policy action in dataset format."""
+        return self.action_manager.action
 
     def dataset_state(self) -> np.ndarray:
         """Return dataset EEF XYZ, Euler XYZ, and signed finger positions.
@@ -373,11 +226,9 @@ class StackCubeExpertEnv(EmbodiedEnv):
 
     def dataset_states(self) -> np.ndarray:
         """Return one eight-dimensional EEF observation for each environment."""
-        poses = self.robot.get_link_pose("panda_hand", to_matrix=True).cpu().numpy()
-        positions = poses[:, :3, 3] + poses[:, :3, :3] @ np.array([0.0, 0.0, 0.1034])
-        eulers = Rotation.from_matrix(poses[:, :3, :3]).as_euler("xyz")
-        fingers = self.robot.get_qpos()[:, self.hand_ids].cpu().numpy() * [1.0, -1.0]
-        return np.concatenate((positions, eulers, fingers), axis=-1).astype(np.float32)
+        from rlinf.envs.sim.embodichain.stack_cube_terms import stack_cube_state
+
+        return stack_cube_state(self, {}).cpu().numpy()
 
     def stack_metrics(self) -> dict:
         """Measure both stacking relations, release, and rigid-body motion."""
@@ -483,7 +334,12 @@ def build_stack_cube_env(
     execute_init_hooks()
     raw = load_config(task)
     cfg = config_to_cfg(
-        raw, manager_modules=get_manager_modules(), source_path=str(task)
+        raw,
+        manager_modules=[
+            *get_manager_modules(),
+            "rlinf.envs.sim.embodichain.stack_cube_terms",
+        ],
+        source_path=str(task),
     )
     cfg.robot.fpath = str(asset)
     if num_envs < 1:

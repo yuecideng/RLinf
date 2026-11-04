@@ -5043,7 +5043,7 @@ def test_embodichain_package_config_resolves_away_from_cwd(
         else "RLinf-StackCube-Expert-v1"
     )
     assert payload.id == expected_id
-    assert (selected.parent / payload.environment.component).is_file()
+    assert (selected.parent / payload.scene.component).is_file()
     assert (selected.parent / payload.embodiment.component).is_file()
 
 
@@ -5275,9 +5275,11 @@ def test_isaaclab_stack_eval_preserves_dataset_euler_and_signed_fingers():
 @pytest.fixture
 def embodichain_reward_sdk():
     """Use the real SDK reward manager without creating a simulator."""
-    return pytest.importorskip(
-        "embodichain.lab.gym.envs.managers", exc_type=ImportError
-    )
+    sdk = pytest.importorskip("embodichain.lab.gym.envs.managers", exc_type=ImportError)
+    from embodichain.lab.gym.utils.gym_utils import register_manager_modules
+
+    register_manager_modules(["rlinf.envs.sim.embodichain.stack_cube_terms"])
+    return sdk
 
 
 def test_embodichain_task_wrapper_dispatch(embodichain_reward_sdk, tmp_path):
@@ -5484,12 +5486,11 @@ def stack_cube_gym_config(tmp_path):
     directory = _ROOT / _EMBODICHAIN_CONFIG_PREFIX / "tasks/manipulation/stack_cube"
 
     def write(rewards):
-        environment = OmegaConf.load(directory / "env.yaml")
-        environment.env.rewards = rewards
-        environment_path = tmp_path / "environment.yaml"
-        OmegaConf.save(environment, environment_path)
         deployment = OmegaConf.load(directory / "task.panda.yaml")
-        deployment.environment.component = str(environment_path)
+        deployment.env.rewards = rewards
+        deployment.scene.component = str(
+            (directory / deployment.scene.component).resolve()
+        )
         deployment.embodiment.component = str(
             (directory / deployment.embodiment.component).resolve()
         )
@@ -5767,3 +5768,157 @@ def test_record_video_skips_frames_a_chunk_did_not_render(tmp_path):
 
     assert len(env.render_images) == 1
     assert np.all(env.render_images[0] == 7)
+
+
+def test_stack_cube_native_deployments_share_scene_and_control(embodichain_reward_sdk):
+    """Expert and RL deployments use one scene and the same action contracts."""
+    from embodichain.lab.gym.envs import EmbodiedEnv
+    from embodichain.lab.gym.utils.gym_utils import config_to_cfg, get_manager_modules
+    from embodichain.lab.gym.utils.registration import get_env_spec
+    from embodichain.utils.utility import load_config
+
+    directory = _ROOT / _EMBODICHAIN_CONFIG_PREFIX / "tasks/manipulation/stack_cube"
+    paths = [
+        directory / name
+        for name in ("task.panda.formal_expert.yaml", "task.panda.rl.yaml")
+    ]
+    raw = [load_config(path) for path in paths]
+    configs = [
+        config_to_cfg(value, manager_modules=get_manager_modules(), source_path=path)
+        for path, value in zip(paths, raw)
+    ]
+    assert (paths[0].parent / raw[0]["scene"]["component"]).resolve() == (
+        paths[1].parent / raw[1]["scene"]["component"]
+    ).resolve()
+    for name in ("arm", "gripper"):
+        assert (
+            getattr(configs[0].actions, name).params
+            == getattr(configs[1].actions, name).params
+        )
+        assert (
+            getattr(configs[0].actions, name).func
+            is getattr(configs[1].actions, name).func
+        )
+    assert configs[0].expert_trajectory.use_action_manager
+    assert configs[1].rl_task is not None and configs[1].task_program is None
+    assert get_env_spec(raw[1]["id"]).cls is EmbodiedEnv
+    assert get_env_spec(raw[1]["id"]).supports_rl
+
+
+@pytest.fixture
+def stack_cube_native_managers(embodichain_reward_sdk):
+    """Real managers measure mutable vendor-boundary scene state on CPU."""
+    from embodichain.lab.gym.envs.managers.termination_manager import TerminationManager
+    from embodichain.lab.gym.utils.gym_utils import config_to_cfg, get_manager_modules
+    from embodichain.utils.utility import load_config
+
+    path = (
+        _ROOT
+        / _EMBODICHAIN_CONFIG_PREFIX
+        / "tasks/manipulation/stack_cube/task.panda.rl.yaml"
+    )
+    cfg = config_to_cfg(
+        load_config(path), manager_modules=get_manager_modules(), source_path=path
+    )
+    positions = torch.tensor(
+        [[[0.5, 0.0, 0.0234], [0.5, 0.0, 0.0702], [0.5, 0.0, 0.117]]]
+    ).repeat(2, 1, 1)
+    fingers = torch.full((2, 2), 0.04)
+    objects = {}
+    for index, uid in enumerate(("blue", "red", "green")):
+
+        def pose(*, to_matrix=True, i=index):
+            value = torch.eye(4).repeat(2, 1, 1)
+            value[:, :3, 3] = positions[:, i]
+            return value
+
+        objects[uid] = SimpleNamespace(
+            get_local_pose=pose,
+            body_data=SimpleNamespace(
+                lin_vel=torch.zeros(2, 3), ang_vel=torch.zeros(2, 3)
+            ),
+        )
+    scene = SimpleNamespace(
+        asset_uids=list(objects), get_rigid_object=objects.get, get_asset=objects.get
+    )
+    robot = SimpleNamespace(get_joint_ids=lambda part: [0, 1], get_qpos=lambda: fingers)
+    env = SimpleNamespace(num_envs=2, device="cpu", cfg=cfg, sim=scene, robot=robot)
+    termination = TerminationManager(cfg.rl_task, env)
+    reward = embodichain_reward_sdk.RewardManager(cfg.rewards, env)
+    return SimpleNamespace(
+        env=env,
+        positions=positions,
+        fingers=fingers,
+        termination=termination,
+        reward=reward,
+    )
+
+
+def test_stack_cube_native_conditions_cache_stability_and_reset_selected_rows(
+    stack_cube_native_managers,
+):
+    """Repeated reads preserve dwell history and reset leaves other rows intact."""
+    manager = stack_cube_native_managers.termination
+    for _ in range(19):
+        manager.compute()
+    snapshot = manager.snapshot()
+    assert not snapshot["conditions"]["success.stacked"]["metrics"][
+        "stable_success"
+    ].any()
+    for _ in range(5):
+        manager.snapshot()
+        manager.task_state()
+    manager.reset([0])
+    manager.compute()
+    snapshot = manager.snapshot()
+    assert snapshot["conditions"]["success.stacked"]["metrics"][
+        "stable_success"
+    ].tolist() == [False, True]
+    snapshot["conditions"]["success.stacked"]["metrics"]["positions"].zero_()
+    assert manager.snapshot()["conditions"]["success.stacked"]["metrics"][
+        "positions"
+    ].any()
+
+
+def test_stack_cube_native_reward_preserves_first_episode_and_timeout(
+    stack_cube_native_managers,
+):
+    """Reward follows physical success, then masks post-terminal training steps."""
+    native = stack_cube_native_managers
+
+    def score(time_out=None):
+        native.termination.compute(
+            time_out, ignore_terminations=native.env.cfg.ignore_terminations
+        )
+        success, failure, metrics = native.termination.task_state()
+        return native.reward.compute(
+            {},
+            torch.zeros(2, 7),
+            {
+                "success": success,
+                "fail": failure,
+                "task_outcome": native.termination.snapshot(),
+            },
+        )[0]
+
+    torch.testing.assert_close(score(torch.ones(2, dtype=torch.bool)), torch.ones(2))
+    torch.testing.assert_close(score(), torch.zeros(2))
+    native.reward.reset([0])
+    torch.testing.assert_close(score(), torch.tensor([1.0, 0.0]))
+    native.reward.reset()
+    native.env.cfg.ignore_terminations = True
+    torch.testing.assert_close(score(), torch.ones(2))
+    torch.testing.assert_close(score(), torch.ones(2))
+
+
+@pytest.mark.parametrize(
+    "configured,expected", [("cpu", "cpu"), ("cuda", "cuda:0"), ("cuda:1", "cuda:1")]
+)
+def test_embodichain_device_resolves_explicit_torch_index(configured, expected):
+    from rlinf.envs.sim.embodichain.embodichain_env import (
+        _resolve_sim_device_and_gpu_id,
+    )
+
+    device, gpu_id = _resolve_sim_device_and_gpu_id({"sim_device": configured}, None)
+    assert device == torch.device(expected)
+    assert gpu_id == 0

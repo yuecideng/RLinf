@@ -174,7 +174,12 @@ class PreflightEnv(EnvWorker):
             "sources": loaded_sources(
                 [
                     "rlinf.envs.sim.embodichain.stack_cube",
+                    "rlinf.envs.sim.embodichain.stack_cube_env",
+                    "rlinf.envs.sim.embodichain.stack_cube_terms",
                     "rlinf.envs.sim.embodichain.embodichain_env",
+                    "embodichain.lab.gym.envs.managers.actions",
+                    "embodichain.lab.gym.envs.base_env",
+                    "embodichain.lab.gym.envs.embodied_env",
                 ]
             ),
         }
@@ -531,6 +536,7 @@ def evidence_sources(output: Path) -> dict:
             "rlinf/workers/env/env_worker.py",
             "rlinf/runners/embodied_runner.py",
             "rlinf/envs/sim/embodichain/stack_cube.py",
+            "rlinf/envs/sim/embodichain/stack_cube_terms.py",
             "rlinf/envs/sim/embodichain/embodichain_env.py",
         ]
     ]
