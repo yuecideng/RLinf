@@ -1,6 +1,6 @@
 # A two-rank, two-update SFT/checkpoint integration test using public data.
 defaults:
-  - embodichain_stack_cube_sft_openpi_pi05_smoke
+  - embodichain_stack_cube_sft_openpi_pi05
   - _self_
 
 hydra:

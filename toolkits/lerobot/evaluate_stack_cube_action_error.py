@@ -89,7 +89,7 @@ def evaluate(
             raise ValueError("SFT checkpoint must have complete export metadata")
     config_dir = Path(__file__).resolve().parents[2] / "examples/sft/config"
     with initialize_config_dir(version_base=None, config_dir=str(config_dir)):
-        config = compose(config_name="embodichain_stack_cube_sft_openpi_pi05_smoke")
+        config = compose(config_name="embodichain_stack_cube_sft_openpi_pi05")
     cfg = config.actor.model
     cfg.model_path = str(checkpoint)
     cfg.openpi.task = "eval"

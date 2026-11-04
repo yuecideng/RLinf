@@ -1,6 +1,6 @@
 # Integration uses the public base or a short SFT export with reference statistics.
 defaults:
-  - embodichain_franka_stack_cube_ppo_openpi_pi05_smoke
+  - embodichain_franka_stack_cube_ppo_openpi_pi05
   - _self_
 
 hydra:
@@ -20,9 +20,16 @@ algorithm:
   update_epoch: 1
 
 env:
+  train:
+    total_num_envs: 8
   eval:
+    total_num_envs: 8
     video_cfg:
       save_video: false
+
+actor:
+  micro_batch_size: 8
+  global_batch_size: 32
 
 cluster:
   component_placement:

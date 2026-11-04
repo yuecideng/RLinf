@@ -50,7 +50,7 @@ PROMPT = (
 )
 TASK = (
     Path(__file__).resolve().parents[2]
-    / "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task.panda.yaml"
+    / "rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task.panda.formal_expert.yaml"
 )
 
 
@@ -281,7 +281,7 @@ def main() -> None:
         "--task-config",
         type=Path,
         default=TASK,
-        help="Task Program deployment; the default preserves the smoke expert.",
+        help="Task Program deployment used for expert collection.",
     )
     parser.add_argument(
         "--requests", type=Path, help="Frozen request manifest; all attempts are saved."
