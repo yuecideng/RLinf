@@ -216,7 +216,7 @@ EmbodiChain CartPole 也被 embodied e2e 配置覆盖，位于
      --revision 22c30e5b34f9e7ab738b1b34fc2fc5ecfe2d28f0 \
      --local-dir "$PI05_BASE_MODEL"
 
-安装器将 EmbodiChain 固定到 commit ``1f53f7419f3d5f39382b158807b1fa39a9b0f101``，DexSim 固定到 ``0.5.1rc1``。该 commit 位于 ``yuecideng/EmbodiChain``，基于 main ``16c429bc48ba0bc09e2256be26d8994fcb3b5e0b``，包含 `EmbodiChain PR #985 <https://github.com/DexForce/EmbodiChain/pull/985>`_ 中的共用控制器改动，版本号为 0.3.2。此 Torch 配置使用 Python 3.11；运行前设置仓库、输出与模型路径。GPU 变量表示物理 rank。
+安装器将 EmbodiChain 固定到 commit ``e9cfe070af41c2db5a83335ca56e1c2c2a97b012``，DexSim 固定到 ``0.5.1rc1``。该 commit 位于 ``yuecideng/EmbodiChain``，基于 main ``16c429bc48ba0bc09e2256be26d8994fcb3b5e0b``，包含 `EmbodiChain PR #985 <https://github.com/DexForce/EmbodiChain/pull/985>`_ 中的共用控制器改动，版本号为 0.3.2。此 Torch 配置使用 Python 3.11；运行前设置仓库、输出与模型路径。GPU 变量表示物理 rank。
 
 从固定的公开资产版本准备 Panda URDF 与 mesh。准备后的副本包含控制 TCP 和独立驱动的两个手指。
 
