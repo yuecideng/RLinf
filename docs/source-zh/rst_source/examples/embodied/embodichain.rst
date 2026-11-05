@@ -216,7 +216,7 @@ EmbodiChain CartPole 也被 embodied e2e 配置覆盖，位于
      --revision 22c30e5b34f9e7ab738b1b34fc2fc5ecfe2d28f0 \
      --local-dir "$PI05_BASE_MODEL"
 
-安装器将 EmbodiChain 固定到 commit ``e9cfe070af41c2db5a83335ca56e1c2c2a97b012``，DexSim 固定到 ``0.5.1rc1``。该 commit 位于 ``yuecideng/EmbodiChain``，基于 main ``16c429bc48ba0bc09e2256be26d8994fcb3b5e0b``，包含 `EmbodiChain PR #985 <https://github.com/DexForce/EmbodiChain/pull/985>`_ 中的共用控制器改动，版本号为 0.3.2。此 Torch 配置使用 Python 3.11；运行前设置仓库、输出与模型路径。GPU 变量表示物理 rank。
+安装器将 EmbodiChain 固定到 commit ``bc6e9cebea47dfe1ba8bf520b05c6e1e50b7b2b4``，DexSim 固定到 ``0.5.1rc1``。该 commit 位于 ``yuecideng/EmbodiChain``，基于 main ``16c429bc48ba0bc09e2256be26d8994fcb3b5e0b``，包含 `EmbodiChain PR #985 <https://github.com/DexForce/EmbodiChain/pull/985>`_ 中的共用控制器改动，版本号为 0.3.2。此 Torch 配置使用 Python 3.11；运行前设置仓库、输出与模型路径。GPU 变量表示物理 rank。
 
 从固定的公开资产版本准备 Panda URDF 与 mesh。准备后的副本包含控制 TCP 和独立驱动的两个手指。
 
@@ -390,6 +390,6 @@ SDK 拒绝同时声明 ``task_program`` 和 ``rl_task`` 的 deployment。RLinf a
 
 `不可变实验归档 <https://github.com/yuecideng/RLinf/tree/7d807a5d89d4d1abffd3b4fdfc3481f7c7371d80/examples/embodiment/results/embodichain_stack_cube_pi05>`_ 保存早期 checkpoint 的源码版本、validation 计数、曲线和校验和。这些实验使用其记录的数据、相机与 SDK 快照，不能为新采集的数据或迁移后的原生 RL deployment 提供准入证明。
 
-迁移验证在 RTX PRO 5000 72 GB 上以 batch 1 和 8 分别回放相同动作 450 步，两种实现的原始 RGB、状态、奖励、termination、truncation 和稳定性完全一致。实际 Task Program 采集的 600 步动作、状态、物理测量与两路原始 RGB 也完全一致。该请求在两种实现中均于第 563 步稳定完成，均未通过保持不变的 450 步验收门槛。
+迁移验证在 RTX PRO 5000 72 GB 上以 batch 1 和 8 分别回放相同动作 450 步，两种实现的原始 RGB、状态、奖励、termination、truncation 和稳定性完全一致。实际 Task Program 的 600 步采集在专家完成前，动作、状态、物理测量与两路原始 RGB 完全一致。已完成的 demo 行现在保持测量关节位置，因此完成后的尾部状态可能与早期控制器不同。该请求在两种实现中均于第 563 步稳定完成，均未通过保持不变的 450 步验收门槛。
 
 独立集成测试在物理 GPU 5、6 上采集两条 450 步轨迹，执行一次 PPO 更新并保存 checkpoint。198 个 Adam 状态均到达 step 1，477 个冻结张量保持一致，675 个导出张量均为有限值。这些检查验证行为和接口兼容性；新的训练仍需重新通过固定 cohort 的 learned-policy 准入验证。

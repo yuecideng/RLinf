@@ -230,7 +230,7 @@ The following setup selects Torch 2.7.1 with CUDA 12.8 and the public base weigh
      --local-dir "$PI05_BASE_MODEL"
 
 The installer pins EmbodiChain to commit
-``e9cfe070af41c2db5a83335ca56e1c2c2a97b012`` and DexSim to ``0.5.1rc1``.
+``bc6e9cebea47dfe1ba8bf520b05c6e1e50b7b2b4`` and DexSim to ``0.5.1rc1``.
 This commit in ``yuecideng/EmbodiChain`` is based on main
 ``16c429bc48ba0bc09e2256be26d8994fcb3b5e0b`` and contains the shared-controller
 changes in `EmbodiChain PR #985 <https://github.com/DexForce/EmbodiChain/pull/985>`_.
@@ -483,9 +483,11 @@ qualify a fresh collection or a migrated native RL deployment.
 Migration checks on an RTX PRO 5000 72 GB replayed identical actions for 450
 steps at batches 1 and 8. Both implementations produced identical raw RGB,
 states, rewards, termination, truncation and stability. An actual 600-step
-Task Program collection also matched actions, states, physical measurements
-and both raw RGB streams exactly. That request stabilized at step 563 in both
-implementations and failed the unchanged 450-step acceptance threshold.
+Task Program collection matched actions, states, physical measurements and both
+raw RGB streams until expert completion. Completed demo rows now retain measured
+joint holds, so post-completion tail states can differ from the earlier
+controller. The request stabilized at step 563 in both implementations and
+failed the unchanged 450-step acceptance threshold.
 
 A separate integration run on physical GPUs 5 and 6 collected two 450-step
 rollouts, performed one PPO update and saved a checkpoint. All 198 Adam states
