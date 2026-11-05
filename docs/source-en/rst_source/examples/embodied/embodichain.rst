@@ -230,7 +230,7 @@ The following setup selects Torch 2.7.1 with CUDA 12.8 and the public base weigh
      --local-dir "$PI05_BASE_MODEL"
 
 The installer pins EmbodiChain to commit
-``bc6e9cebea47dfe1ba8bf520b05c6e1e50b7b2b4`` and DexSim to ``0.5.1rc1``.
+``7ef56bd5317f92f7d7a5d2ea61cdc0ef38e1fbeb`` and DexSim to ``0.5.1rc1``.
 This commit in ``yuecideng/EmbodiChain`` is based on main
 ``16c429bc48ba0bc09e2256be26d8994fcb3b5e0b`` and contains the shared-controller
 changes in `EmbodiChain PR #985 <https://github.com/DexForce/EmbodiChain/pull/985>`_.

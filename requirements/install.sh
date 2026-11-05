@@ -2523,7 +2523,7 @@ EOF
                 MODEL=""
                 create_and_sync_venv
                 install_common_embodied_deps
-                install_embodichain_env bc6e9cebea47dfe1ba8bf520b05c6e1e50b7b2b4 \
+                install_embodichain_env 7ef56bd5317f92f7d7a5d2ea61cdc0ef38e1fbeb \
                     "$SCRIPT_DIR/embodied/envs/embodichain_openpi.txt" \
                     https://github.com/yuecideng/EmbodiChain.git
                 uv pip check
