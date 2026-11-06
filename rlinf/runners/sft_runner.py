@@ -15,6 +15,7 @@
 import json
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Union
 
@@ -54,12 +55,14 @@ class SFTRunner:
         cfg: DictConfig,
         actor: Union["FSDPSftWorker", "FSDPRewardWorker"],
         run_timer: Optional[ScopedTimer] = None,
+        stop_condition: Callable[[int], bool] | None = None,
     ) -> None:
         self.cfg = cfg
         self.actor = actor
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
+        self.stop_condition = stop_condition
 
         self.consumed_samples = 0
         # the step here is GRPO step
@@ -170,7 +173,10 @@ class SFTRunner:
 
             global_pbar.set_postfix(logging_metrics, refresh=False)
             global_pbar.update(1)
-            if should_stop:
+            if should_stop or (
+                self.stop_condition is not None
+                and self.stop_condition(self.global_step)
+            ):
                 break
 
         if self.early_stop is not None and self.early_stop.best_val_acc > 0:
@@ -253,6 +259,14 @@ class SFTRunner:
         max_epochs = self.cfg.runner.get("max_epochs", -1)
         max_steps = self.cfg.runner.get("max_steps", -1)
 
+        if self.num_steps_per_epoch is None:
+            if max_steps <= 0 or max_epochs > 0:
+                raise ValueError(
+                    "Streaming SFT requires positive max_steps and no epoch limit."
+                )
+            self.max_steps = max_steps
+            return
+
         step_limits = []
         if max_epochs > 0:
             step_limits.append(self.num_steps_per_epoch * max_epochs)
@@ -264,5 +278,7 @@ class SFTRunner:
         self.max_steps = min(step_limits) if step_limits else self.num_steps_per_epoch
 
     @property
-    def epoch(self) -> int:
+    def epoch(self) -> int | None:
+        if self.num_steps_per_epoch is None:
+            return None
         return self.global_step // self.num_steps_per_epoch

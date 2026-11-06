@@ -347,14 +347,45 @@ class Pi0(model.BaseModel):
         rng: torch.Generator | None = None,
         noise: torch.Tensor | None = None,
         time: torch.Tensor | None = None,
+        action_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Compute flow matching loss.
+
+        Args:
+            observation: Policy inputs.
+            actions: Normalized, model-width action targets.
+            train: Enable training observation preprocessing.
+            rng: Optional generator for preprocessing and noise.
+            noise: Optional flow noise for reproducible evaluation.
+            time: Optional flow interpolation times.
+            action_mask: Optional boolean ``[B, action_horizon]`` target mask.
+                Invalid action tokens neither contribute loss nor participate
+                in attention; every sample must retain a valid target.
 
         Returns:
             loss: (B, action_horizon, action_dim) per-element MSE
         """
         B = actions.shape[0]
         device = actions.device
+        if action_mask is not None:
+            if (
+                not isinstance(action_mask, torch.Tensor)
+                or action_mask.dtype != torch.bool
+            ):
+                raise TypeError("SFT action_mask must be a boolean torch.Tensor.")
+            if tuple(action_mask.shape) != (B, self.action_horizon) or tuple(
+                actions.shape[:2]
+            ) != tuple(action_mask.shape):
+                raise ValueError(
+                    f"SFT action_mask must have shape {(B, self.action_horizon)} "
+                    f"matching actions; found {tuple(action_mask.shape)}."
+                )
+            action_mask = action_mask.to(device=device)
+            if not bool(action_mask.any(dim=1).all()):
+                raise ValueError(
+                    "SFT action_mask must retain a target in every sample."
+                )
+            actions = torch.where(action_mask[..., None], actions, 0.0)
 
         # Preprocess first (requires float32 for image ops), then cast the
         # observation to embed_dtype for Gemma / SigLIP. Keep actions in
@@ -392,6 +423,8 @@ class Pi0(model.BaseModel):
         suffix_tokens, suffix_mask, suffix_ar_mask, adarms_cond = self.embed_suffix(
             observation, x_t, time
         )
+        if action_mask is not None:
+            suffix_mask[:, -self.action_horizon :] &= action_mask
 
         input_mask = torch.cat([prefix_mask, suffix_mask], dim=1)
         ar_mask = torch.cat([prefix_ar_mask, suffix_ar_mask], dim=0)
@@ -408,7 +441,10 @@ class Pi0(model.BaseModel):
 
         v_t = self.velocity_from_suffix(suffix_out[:, -self.action_horizon :])
 
-        return torch.square(v_t - u_t)
+        loss = torch.square(v_t - u_t)
+        if action_mask is not None:
+            loss = torch.where(action_mask[..., None], loss, 0.0)
+        return loss
 
     def build_prefix_cache(
         self, observation: model.Observation
@@ -767,7 +803,10 @@ class Pi0(model.BaseModel):
         )
 
     def _reduce_sft_loss(
-        self, per_element_loss: torch.Tensor, use_action_chunk_loss: bool
+        self,
+        per_element_loss: torch.Tensor,
+        use_action_chunk_loss: bool,
+        action_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Mean flow-matching MSE, optionally restricted to the env action chunk.
 
@@ -787,7 +826,21 @@ class Pi0(model.BaseModel):
                 else per_element_loss.shape[-1]
             )
             per_element_loss = per_element_loss[:, :horizon, :env_dim]
-        return per_element_loss.mean()
+        if action_mask is None:
+            return per_element_loss.mean()
+        action_mask = action_mask.to(device=per_element_loss.device)[
+            :, : per_element_loss.shape[1]
+        ]
+        counts = action_mask.sum(dim=1)
+        if use_action_chunk_loss and not bool((counts > 0).all()):
+            raise ValueError(
+                "The SFT action chunk must retain a target in every sample."
+            )
+        masked_loss = torch.where(action_mask[..., None], per_element_loss, 0.0)
+        per_sample_loss = masked_loss.sum(dim=(1, 2)) / (
+            counts * per_element_loss.shape[-1]
+        )
+        return per_sample_loss.mean()
 
     def _sft_forward_with_rlt_prefix(
         self,
@@ -841,11 +894,28 @@ class Pi0(model.BaseModel):
     def sft_forward(
         self, data: Any, use_action_chunk_loss: bool = False, **kwargs
     ) -> torch.Tensor | dict[str, torch.Tensor]:
-        """Flow-matching SFT loss. Shared by SFT, DAgger, and PPO co-train."""
+        """Compute SFT loss, optionally masking padded action-window targets.
+
+        Dict batches may carry a boolean ``action_mask`` with shape ``[B, H]``.
+        Masked loss averages valid timesteps and model action dimensions within
+        each sample, then averages samples. Masked batches require RLT disabled.
+        """
         del kwargs
         observation, actions = self._unpack_sft_batch(data)
         observation = self._observation_to_device(observation)
         actions = self._actions_to_device(actions)
+        action_mask = data.get("action_mask") if isinstance(data, dict) else None
+        if action_mask is not None:
+            if self.rlt_cfg.use_rlt:
+                raise ValueError(
+                    "Masked SFT requires actor.model.openpi.use_rlt=False."
+                )
+            per_element_loss = self.compute_loss(
+                observation, actions, train=True, action_mask=action_mask
+            )
+            return self._reduce_sft_loss(
+                per_element_loss, use_action_chunk_loss, action_mask
+            )
         if not self.rlt_cfg.use_rlt:
             per_element_loss = self.compute_loss(observation, actions, train=True)
             return self._reduce_sft_loss(per_element_loss, use_action_chunk_loss)

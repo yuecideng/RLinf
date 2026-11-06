@@ -35,7 +35,7 @@ Choose CartPole for a state-based MLP policy, or three-block stacking for a two-
    .. grid-item-card:: Hardware
       :text-align: center
 
-      1 node · CartPole: 4 GPUs · Stack Cube: 2 GPUs
+      1 node · CartPole: 4 GPUs · Stack Cube: 2 GPUs (online SFT: 3)
 
 | **You'll do:** install → launch ``run_embodiment.sh`` → watch rollout rewards.
 | **Prerequisites:** :doc:`Installation </rst_source/start/installation>` · EmbodiChain package and task resources.
@@ -230,12 +230,13 @@ The following setup selects Torch 2.7.1 with CUDA 12.8 and the public base weigh
      --local-dir "$PI05_BASE_MODEL"
 
 The installer pins EmbodiChain to commit
-``7ef56bd5317f92f7d7a5d2ea61cdc0ef38e1fbeb`` and DexSim to ``0.5.1rc1``.
+``af0401eb50c40d86d0e1b23eb13306cf1bb0bd77`` and DexSim to ``0.5.1rc1``.
 This commit in ``yuecideng/EmbodiChain`` is based on main
-``16c429bc48ba0bc09e2256be26d8994fcb3b5e0b`` and contains the shared-controller
-changes in `EmbodiChain PR #985 <https://github.com/DexForce/EmbodiChain/pull/985>`_.
-It reports version 0.3.2. Use Python 3.11 for this Torch recipe. Set the repository, output and model paths before running the
-commands. The GPU variables below identify physical ranks.
+``c45fee8e5bc1abdbfedc22112fc267edf8242a4f`` and includes the online-source
+extension points in `EmbodiChain PR #1101 <https://github.com/DexForce/EmbodiChain/pull/1101>`_.
+It reports version 0.3.2. Use Python 3.11 for this Torch recipe. Set the repository,
+output and model paths before running the commands. GPU variables identify
+physical ranks.
 
 Prepare the Panda URDF and meshes from the pinned public asset source. The
 prepared copy includes the control TCP and independently actuated fingers.
@@ -364,6 +365,126 @@ The evaluator saves per-episode physical measurements and videos. Use the
 validation result to select a checkpoint, then evaluate the separate test
 requests in a new output directory. SFT loss and expert-replay success do not
 establish learned-policy success.
+
+Train From Online Demonstrations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Use fresh Task Program demonstrations while the existing FSDP SFT worker trains.
+Freeze normalization computed from qualified native training demonstrations before calibration. The reference IsaacLab statistics have zero roll/pitch action range and are unsuitable for these varying expert targets; the ODS adapter warns on this mismatch. Compute native train-only statistics with the existing collection and statistics commands above, and set ``STACK_CUBE_NORM_STATS`` to that file.
+The online recipe places one simulator owner on physical GPU 0 and two actor
+ranks on physical GPUs 4 and 5. Set the model, prepared Panda asset and fixed
+train-only normalization paths from the previous sections before calibration.
+
+.. code-block:: bash
+
+   export ODS_SIM_PYTHONPATH="$REPO_PATH"
+   export STACK_CUBE_ODS_TRAIN_REQUESTS="$STACK_RUN/requests/ods_train.json"
+   python toolkits/lerobot/prepare_stack_cube_data.py manifest \
+     --profile formal --split train --seed 40000 --episodes 512 \
+     --output "$STACK_CUBE_ODS_TRAIN_REQUESTS"
+   "$STACK_CUBE_ENV_PYTHON" toolkits/ods/calibrate_sft.py \
+     --model-python "$STACK_CUBE_MODEL_PYTHON" \
+     --output "$STACK_RUN/ods_calibration"
+
+This creates an independent pilot and planned trial for each producer count
+1, 2, 4, 8. Each trial reloads the same starting checkpoint. Calibration excludes
+three warmup updates and requires at least ten complete optimizer updates and
+one complete cache replacement. A candidate has a thirty-minute total limit;
+failed quality, memory, source or recipe checks exclude it. The SDK measures
+accepted episodes and completed global-batch chunks, then ``configure_ods()``
+produces the cache, quota, refill and pacing settings. ``ODSFlowController``
+validates and applies the resulting recipe. The selected count is the smallest
+within 95% of the best measured training throughput, including supply waits.
+
+Read ``candidates.json`` and ``selected.json`` under the calibration directory.
+The PI0.5 profile is explicitly provisional (``qualified=false``), with 32–128
+chunk selections per accepted episode and a hard limit of 128. These bounds
+permit one to four 32-chunk optimizer batches per source episode; they are not
+an accuracy qualification. Extend ``--candidates`` explicitly and adjust the
+pilot cache with ``--override data.ods.pilot_cache.buffer_size=16`` when necessary.
+Batch size, learning rate, H10/C5 and total training steps remain configured
+inputs rather than outputs of the planner.
+
+Pass the selected producer count and recipe to the normal SFT entry:
+
+.. code-block:: bash
+
+   export STACK_CUBE_ODS_TRAIN_REQUESTS="$STACK_RUN/requests/ods_formal_train.json"
+   python toolkits/lerobot/prepare_stack_cube_data.py manifest \
+     --profile formal --split train --seed 7000000 --episodes 65536 \
+     --output "$STACK_CUBE_ODS_TRAIN_REQUESTS"
+   export ODS_RECIPE=/path/to/ods_calibration/p2-recipe.json
+   "$STACK_CUBE_MODEL_PYTHON" examples/sft/train_vla_sft.py \
+     --config-name embodichain_stack_cube_ods_sft_openpi_pi05 \
+     data.ods.producer_envs=2 \
+     runner.logger.log_path="$STACK_RUN/online_sft" \
+     runner.logger.experiment_name=run
+
+Generate enough disjoint training requests for the formal step budget; the
+512-request pilot manifest is only for calibration. The formal source has no
+accepted-episode ceiling by default. Replace the example count 2 and recipe path
+with the measured selection. The configuration uses ``data.train_data_source: ods``, null ``train_data_paths``,
+zero loader subprocesses and ``stateful_loader: false``. A positive
+``runner.max_steps`` specifies the streaming budget. One source draw supplies
+one global optimizer batch; rank and gradient-accumulation splitting do not
+multiply delivery quotas. All ranks admit their encoded inputs before entering
+forward/backward, and the source owner closes its production child on stop or
+failure.
+
+Formal collection and ODS share the measured expert policy. It keeps the existing
+relative EEF controller, exact FK
+execution, cameras and overall instruction. It authors 50 minimum motion samples
+and a 2 rad/s² acceleration limit so the formal training requests can complete
+within the qualification window. Collection capacity remains 600 steps. Admission
+requires the complete program plus at least 20 physical settling controls and a
+stable final 20-frame window by step 450. The settling tail qualifies the episode;
+only valid Task Program frames supply supervision. Failed attempts are audited
+before a fresh request is tried. Train, validation and test requests stay separate.
+
+Each sample carries the current two-camera frame, 8D state and overall task
+instruction. Future observations, expert phases and provenance stay outside
+model inputs. ODS padding becomes ``action_mask[B,H]``: invalid suffix tokens
+cannot attend or contribute flow-matching loss, and each sample is averaged over
+its valid elements before the batch mean. Missing masks retain offline SFT
+behavior.
+
+Checkpoints contain ``ods_source.json`` with schema, encoder and normalization
+fingerprints plus supply audit metadata. Use a fresh
+``runner.logger.experiment_name`` for each source session so previous audit files
+remain intact. Resume with ``runner.resume_dir`` and a
+``runner.max_steps`` larger than the saved global step. Training state and RNG
+resume through the existing checkpoint backend; the producer starts a new session
+with fresh cache and quotas. Previously delivered chunks are not refunded, and
+batch order is not exactly replayed. Evaluate the exported weights through the
+existing Ray evaluation entry with the same frozen validation manifest used for
+the offline baseline.
+
+.. code-block:: bash
+
+   export STACK_CUBE_SFT_MODEL=/path/to/online_sft/run/checkpoints/global_step_15000/actor
+   export STACK_CUBE_PPO_VAL_REQUESTS="$STACK_RUN/requests/val.json"
+   bash evaluations/run_eval.sh embodichain embodichain_stack_cube_openpi_pi05_eval
+
+This Ray evaluation runs 27 frozen requests for 450 controls on GPU 0, with
+inference on GPU 4. Read ``eval/success_at_end`` for the final 20-frame stability
+success rate and keep the videos and request manifest beside the checkpoint.
+
+Measured Native Integration
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The 2026-11-06 run selected two producer environments. Steady wall throughput was
+5.06, 6.18 and 5.23 chunks/s for 1, 2 and 4 producers; 8 producers failed physical
+admission. All candidates used the same fixed native train-only statistics,
+starting checkpoint, cameras and batch 32. The selected provisional SDK recipe
+has 10 cache episodes and 87 chunk selections per episode, with a hard limit 128.
+
+A short GPU 0 / GPU 4–5 check restored SFT 15000→15002 and resumed for one further
+update. Losses were 0.2456, 0.2856 and 0.3176; all 665 active Adam states reached
+15002 before resume. Independent Ray validation on the frozen 27 requests scored
+**0/27** final stable success. This validates streaming, masking and recovery;
+full-length native SFT and scientific reuse-profile qualification remain open.
+See the current JSON, curve and provenance in
+``examples/embodiment/results/embodichain_stack_cube_pi05/``.
 
 Run Formal PPO
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -35,7 +35,7 @@ CartPole 使用基于状态的 MLP policy，三方块堆叠使用双相机 PI 0.
    .. grid-item-card:: 硬件
       :text-align: center
 
-      1 节点 · CartPole：4 GPUs · Stack Cube：2 GPUs
+      1 节点 · CartPole：4 GPUs · Stack Cube：2 GPUs（在线 SFT：3 GPUs）
 
 | **你将完成：** 安装 → 启动 ``run_embodiment.sh`` → 观察 rollout reward。
 | **前置条件：** :doc:`安装 </rst_source/start/installation>` · EmbodiChain 包与任务资源。
@@ -216,7 +216,7 @@ EmbodiChain CartPole 也被 embodied e2e 配置覆盖，位于
      --revision 22c30e5b34f9e7ab738b1b34fc2fc5ecfe2d28f0 \
      --local-dir "$PI05_BASE_MODEL"
 
-安装器将 EmbodiChain 固定到 commit ``7ef56bd5317f92f7d7a5d2ea61cdc0ef38e1fbeb``，DexSim 固定到 ``0.5.1rc1``。该 commit 位于 ``yuecideng/EmbodiChain``，基于 main ``16c429bc48ba0bc09e2256be26d8994fcb3b5e0b``，包含 `EmbodiChain PR #985 <https://github.com/DexForce/EmbodiChain/pull/985>`_ 中的共用控制器改动，版本号为 0.3.2。此 Torch 配置使用 Python 3.11；运行前设置仓库、输出与模型路径。GPU 变量表示物理 rank。
+安装器将 EmbodiChain 固定到 commit ``af0401eb50c40d86d0e1b23eb13306cf1bb0bd77``，DexSim 固定到 ``0.5.1rc1``。该 commit 位于 ``yuecideng/EmbodiChain``，基于 main ``c45fee8e5bc1abdbfedc22112fc267edf8242a4f``，包含 `EmbodiChain PR #1101 <https://github.com/DexForce/EmbodiChain/pull/1101>`_ 中的在线源扩展接口，版本号为 0.3.2。此 Torch 配置使用 Python 3.11；运行前设置仓库、输出与模型路径。GPU 变量表示物理 rank。
 
 从固定的公开资产版本准备 Panda URDF 与 mesh。准备后的副本包含控制 TCP 和独立驱动的两个手指。
 
@@ -313,6 +313,68 @@ PPO 前在固定 validation 请求上评估 SFT 导出。每集运行 450 个控
      --output "$STACK_RUN/sft_validation"
 
 Evaluator 保存逐集物理测量和视频。根据 validation 结果选定 checkpoint 后，在新的输出目录评估独立 test 请求。SFT loss 和专家回放成功率不能代替 learned-policy 成功率。
+
+使用在线演示训练
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+校准前，从合格的原生 train 演示计算一次 normalization 并冻结。参考 IsaacLab 统计量的动作 roll/pitch 范围为零，无法合理缩放这些会变化的专家标签；ODS adapter 会提示这一不匹配。使用前文正式采集与统计命令生成原生 train-only 统计量，再将 ``STACK_CUBE_NORM_STATS`` 指向该文件。
+
+让 Task Program 持续生成新演示，同时使用现有 FSDP SFT worker 训练。在线配置将一个仿真 owner 放在物理 GPU 0，两个 actor rank 放在物理 GPU 4、5。校准前，先按前文准备模型、Panda 资产和固定的 train-only normalization 路径。
+
+.. code-block:: bash
+
+   export ODS_SIM_PYTHONPATH="$REPO_PATH"
+   export STACK_CUBE_ODS_TRAIN_REQUESTS="$STACK_RUN/requests/ods_train.json"
+   python toolkits/lerobot/prepare_stack_cube_data.py manifest \
+     --profile formal --split train --seed 40000 --episodes 512 \
+     --output "$STACK_CUBE_ODS_TRAIN_REQUESTS"
+   "$STACK_CUBE_ENV_PYTHON" toolkits/ods/calibrate_sft.py \
+     --model-python "$STACK_CUBE_MODEL_PYTHON" \
+     --output "$STACK_RUN/ods_calibration"
+
+
+脚本分别为 1、2、4、8 个生产环境建立独立的 pilot 和配方验证目录，每轮都重新加载同一个起点 checkpoint。校准排除前 3 次预热更新，并要求至少 10 次完整 optimizer 更新和一次完整缓存补充。每档总时限为 30 分钟；质量、内存、源端或配方检查失败的档位不参与选择。SDK 按通过验收的 episodes 和实际完成的 global-batch chunks 测量吞吐，再由 ``configure_ods()`` 生成缓存、配额、补数和节流设置，交给 ``ODSFlowController`` 校验及执行。最终选择包含供数等待的训练吞吐达到最佳值 95% 的最小并发数。
+
+查看校准目录中的 ``candidates.json`` 和 ``selected.json``。PI0.5 profile 明确标记为临时配置（``qualified=false``），每条合格 episode 分配 32–128 次 chunk 采样，硬上限为 128，相当于每条源轨迹供给 1–4 个 32-chunk optimizer batch；这些边界尚未完成精度资格验证。需要扩展候选时显式设置 ``--candidates``，并按需通过 ``--override data.ods.pilot_cache.buffer_size=16`` 调整 pilot 缓存。Batch size、学习率、H10/C5 和总训练步数仍是输入，自动工具只生成供数配方。
+
+把选中的并发数和配方交给正常 SFT 入口：
+
+.. code-block:: bash
+
+   export STACK_CUBE_ODS_TRAIN_REQUESTS="$STACK_RUN/requests/ods_formal_train.json"
+   python toolkits/lerobot/prepare_stack_cube_data.py manifest \
+     --profile formal --split train --seed 7000000 --episodes 65536 \
+     --output "$STACK_CUBE_ODS_TRAIN_REQUESTS"
+   export ODS_RECIPE=/path/to/ods_calibration/p2-recipe.json
+   "$STACK_CUBE_MODEL_PYTHON" examples/sft/train_vla_sft.py \
+     --config-name embodichain_stack_cube_ods_sft_openpi_pi05 \
+     data.ods.producer_envs=2 \
+     runner.logger.log_path="$STACK_RUN/online_sft" \
+     runner.logger.experiment_name=run
+
+
+正式训练先生成足够覆盖步数预算、与冻结 validation/test seed 范围不相交的 train 请求；512 条 pilot 请求只用于校准，正式源默认不设合格 episode 总数上限。将示例中的并发数 2 和配方路径替换为测量结果。配置使用 ``data.train_data_source: ods``、空 ``train_data_paths``、零 loader 子进程和 ``stateful_loader: false``。流式预算通过正数 ``runner.max_steps`` 指定。源端每次只采样一个 global optimizer batch；rank 和梯度累积切分不重复扣配额。各 rank 在 forward/backward 前统一验收已编码的输入，停止或失败时由源 owner 清理其生产子进程。
+
+正式采集和 ODS 共用通过验收的专家执行配置，保持现有相对 EEF 控制器、精确 FK 执行、相机和整体任务指令，显式设置最少 50 个运动采样点及 2 rad/s² 加速度上限，使正式 train 请求可在验收窗口内完成。采集容量仍为 600 步；必须在 450 步内完成全部程序、至少额外执行 20 个物理 settling 控制步，并满足最后连续 20 帧稳定。Settling 只参与物理验收，监督数据保留有效 Task Program 帧。失败尝试记录审计后再尝试新请求。Train、validation 和 test 请求保持独立。
+
+每条样本只向模型提供当前双相机帧、8 维状态和整体任务指令；未来观测、专家阶段和 provenance 留在源端。ODS padding 转为 ``action_mask[B,H]``，无效后缀 token 不参与注意力和 flow-matching 损失；每条样本先按有效元素归一化，再取 batch 平均。未提供 mask 的离线 SFT 保持原行为。
+
+Checkpoint 的 ``ods_source.json`` 保存 schema、encoder、normalization 指纹及供数审计。每个源会话使用新的 ``runner.logger.experiment_name``，保留前次审计文件；恢复时设置 ``runner.resume_dir``，并让 ``runner.max_steps`` 大于已保存的 global step。训练状态与 RNG 通过现有 checkpoint 后端恢复；生产者重建源会话、缓存和配额。已交付 chunks 不退款，也不精确重放 batch 顺序。导出的权重使用现有 Ray 评估入口和离线基线相同的冻结 validation manifest 独立评估。
+
+.. code-block:: bash
+
+   export STACK_CUBE_SFT_MODEL=/path/to/online_sft/run/checkpoints/global_step_15000/actor
+   export STACK_CUBE_PPO_VAL_REQUESTS="$STACK_RUN/requests/val.json"
+   bash evaluations/run_eval.sh embodichain embodichain_stack_cube_openpi_pi05_eval
+
+此 Ray 评估在 GPU 0 上对 27 条冻结请求各执行 450 个控制步，在 GPU 4 上推理。读取 ``eval/success_at_end`` 获取最后连续 20 帧稳定的成功率，并将视频、请求 manifest 与 checkpoint 一起保留。
+
+原生集成测量
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+2026-11-06 的测量选择了两个生产环境。1、2、4 并发的稳态 wall 吞吐分别为 5.06、6.18、5.23 chunks/s；8 并发未通过物理验收。各档保持相同的固定原生 train-only 统计量、起点 checkpoint、相机和 batch 32。选中的临时 SDK 配方使用 10 条缓存轨迹，每条分配 87 次 chunk 采样，硬上限为 128。
+
+GPU 0 / GPU 4–5 的短程检查恢复 SFT 15000→15002，再恢复执行一次更新，loss 为 0.2456、0.2856、0.3176；恢复前全部 665 个活跃 Adam 状态到达 15002。冻结 27 条请求的独立 Ray 验证为 **0/27** 最终稳定成功。此结果验证流式供数、mask 和恢复接口；全预算原生 SFT 与复用 profile 的精度资格仍待验证。当前 JSON、曲线和 provenance 位于 ``examples/embodiment/results/embodichain_stack_cube_pi05/``。
 
 正式 PPO
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

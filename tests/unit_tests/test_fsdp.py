@@ -356,11 +356,12 @@ class _CheckpointCall:
 class _CheckpointActor:
     """A synchronous fake at the worker-group RPC edge with real serialization."""
 
-    def __init__(self, manager, fail=False):
+    def __init__(self, manager, fail=False, steps_per_epoch=2):
         self.manager, self.fail = manager, fail
+        self.steps_per_epoch = steps_per_epoch
 
     def get_max_steps_per_epoch(self):
-        return _CheckpointCall(lambda: [2])
+        return _CheckpointCall(lambda: [self.steps_per_epoch])
 
     def set_global_step(self, step):
         pass
@@ -387,8 +388,9 @@ class _CheckpointActor:
 
 
 @pytest.mark.parametrize("interval", [None, 1000])
+@pytest.mark.parametrize("steps_per_epoch", [2, None])
 def test_sft_checkpoint_completion_and_final_state(
-    cpu_checkpoint_platform, tmp_path, interval
+    cpu_checkpoint_platform, tmp_path, interval, steps_per_epoch
 ):
     manager = _checkpoint_manager(interval=interval)
     cfg = OmegaConf.create(
@@ -408,7 +410,9 @@ def test_sft_checkpoint_completion_and_final_state(
             },
         }
     )
-    SFTRunner(cfg, _CheckpointActor(manager)).run()
+    runner = SFTRunner(cfg, _CheckpointActor(manager, steps_per_epoch=steps_per_epoch))
+    runner.run()
+    assert runner.epoch == (None if steps_per_epoch is None else 1)
     for step in (1, 2):
         path = tmp_path / "test" / "checkpoints" / f"global_step_{step}" / "actor"
         metadata = path / "checkpoint_metadata.json"

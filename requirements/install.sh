@@ -2523,9 +2523,11 @@ EOF
                 MODEL=""
                 create_and_sync_venv
                 install_common_embodied_deps
-                install_embodichain_env 7ef56bd5317f92f7d7a5d2ea61cdc0ef38e1fbeb \
+                install_embodichain_env af0401eb50c40d86d0e1b23eb13306cf1bb0bd77 \
                     "$SCRIPT_DIR/embodied/envs/embodichain_openpi.txt" \
                     https://github.com/yuecideng/EmbodiChain.git
+                # SDK forkserver children discover RLinf functors through installed hooks.
+                uv pip install --no-deps -e "$(dirname "$SCRIPT_DIR")"
                 uv pip check
             )
             echo "[install.sh] EmbodiChain env interpreter: $simulator_venv/bin/python"

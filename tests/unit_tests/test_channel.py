@@ -68,6 +68,40 @@ group_count = 0
 channel_count = 0
 
 
+@pytest.mark.placement
+def test_driver_async_ray_work_reports_pending_and_completed():
+    import ray
+
+    from rlinf.scheduler.collective.async_work import AsyncRayWork
+
+    @ray.remote
+    class Gate:
+        def __init__(self):
+            self.event = asyncio.Event()
+
+        async def receive(self):
+            await self.event.wait()
+            return {"value": 7}
+
+        async def release(self):
+            self.event.set()
+
+    ray.init(num_cpus=1, num_gpus=0, include_dashboard=False)
+    gate = Gate.remote()
+    try:
+        work = AsyncRayWork(gate.receive.remote())
+        assert work.done() is False
+        ray.get(gate.release.remote())
+        deadline = time.monotonic() + 10
+        while not work.done() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert work.done() is True
+        assert work.wait() == {"value": 7}
+    finally:
+        ray.kill(gate)
+        ray.shutdown()
+
+
 @dataclass
 class TensorMessage:
     """Simple dataclass with a tensor field for testing direct tensor send/recv/broadcast."""

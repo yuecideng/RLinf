@@ -45,4 +45,21 @@ def get_embodichain_env_cls(env_cfg: Any = None) -> type[EmbodiChainEnv]:
     return REGISTER_EMBODICHAIN_ENVS.get(config["id"], EmbodiChainEnv)
 
 
-__all__ = ["EmbodiChainEnv", "StackCubeEnv", "get_embodichain_env_cls"]
+def register_terms() -> None:
+    """Declare manager modules without importing task-specific SDK classes."""
+    from embodichain.lab.gym.utils.gym_utils import register_manager_modules
+
+    register_manager_modules(
+        [
+            "rlinf.envs.sim.embodichain.stack_cube_terms",
+            "rlinf.envs.sim.embodichain.ods",
+        ]
+    )
+
+
+__all__ = [
+    "EmbodiChainEnv",
+    "StackCubeEnv",
+    "get_embodichain_env_cls",
+    "register_terms",
+]

@@ -11,7 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +21,7 @@ import torch
 from torchdata.stateful_dataloader import StatefulDataLoader
 
 from rlinf.config import SupportedModel
+from rlinf.data.datasets.openpi.ods import ODSStream, OpenPIODSDataLoader
 from rlinf.data.datasets.openpi.official_sft_data_loader import StatefulOpenPIDataLoader
 from rlinf.hybrid_engines.fsdp.strategy.checkpoint import checkpoint_communication_group
 from rlinf.models.embodiment.base_policy import ForwardType
@@ -27,6 +30,10 @@ from rlinf.workers.sft.fsdp_sft_worker import FSDPSftWorker
 
 
 class FSDPVlaSftWorker(FSDPSftWorker):
+    def __init__(self, cfg: Any, ods_stream: ODSStream | None = None) -> None:
+        self._ods_stream = ods_stream
+        super().__init__(cfg)
+
     def init_worker(self) -> None:
         """Seed OpenPI initialization together and training streams per rank."""
         seed = int(self.cfg.actor.seed)
@@ -40,6 +47,14 @@ class FSDPVlaSftWorker(FSDPSftWorker):
 
     def build_dataloader(self, data_paths: Any, eval_dataset: bool = False):
         model_type = SupportedModel(self.cfg.actor.model.model_type)
+        if not eval_dataset and self.cfg.data.get("train_data_source") == "ods":
+            from rlinf.data.datasets.openpi.ods import build_ods_openpi_sft_dataloader
+
+            if model_type != SupportedModel.OPENPI or self._ods_stream is None:
+                raise ValueError("ODS SFT requires OpenPI and a ready source stream.")
+            return build_ods_openpi_sft_dataloader(
+                self.cfg, self._ods_stream, self._world_size, self._rank
+            )
         if model_type == SupportedModel.OPENPI:
             from rlinf.data.datasets.openpi import (
                 build_openpi_sft_dataloader,
@@ -93,6 +108,32 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         # now the eval is not supported for embodied sft
         raise NotImplementedError("eval is not supported for embodied sft right now.")
 
+    def run_training(self):
+        if not isinstance(self.data_loader, OpenPIODSDataLoader):
+            return super().run_training()
+        error = None
+        try:
+            self.data_loader.prepare_step(self.global_step + 1)
+        except Exception as exc:
+            error = exc
+        ready = torch.tensor(int(error is None), device=self.device)
+        torch.distributed.all_reduce(ready, op=torch.distributed.ReduceOp.MIN)
+        if not ready.item():
+            raise RuntimeError(
+                "ODS optimizer batch admission failed on an actor rank."
+            ) from error
+        started = time.monotonic()
+        metrics = super().run_training()
+        active_seconds = (
+            time.monotonic() - started + self.data_loader.input_active_seconds
+        )
+        self.data_loader.commit_step(active_seconds)
+        metrics.update(
+            ods_wait_seconds=self.data_loader.wait_seconds,
+            ods_active_seconds=active_seconds,
+        )
+        return metrics
+
     def get_train_model_output(self, batch: Any) -> tuple[torch.Tensor, dict[str, Any]]:
         with self.amp_context:
             output = self.model(forward_type=ForwardType.SFT, data=batch)
@@ -122,6 +163,16 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         super().save_checkpoint(
             save_path, step, force_training_state=force_training_state
         )
+        if isinstance(self.data_loader, OpenPIODSDataLoader):
+            if self._rank == 0:
+                target = Path(save_path) / "ods_source.json"
+                temporary = target.with_suffix(".json.tmp")
+                temporary.write_text(
+                    json.dumps(self.data_loader.checkpoint_metadata(), indent=2)
+                )
+                temporary.replace(target)
+            torch.distributed.barrier()
+            return
         if not self._should_save_training_state(step, force_training_state):
             return
 
@@ -145,6 +196,8 @@ class FSDPVlaSftWorker(FSDPSftWorker):
                 torch.distributed.barrier()
 
     def load_checkpoint(self, load_path: str) -> None:
+        if isinstance(self.data_loader, OpenPIODSDataLoader):
+            self.data_loader.validate_resume(load_path)
         if isinstance(self.data_loader, StatefulOpenPIDataLoader):
             self.data_loader.validate_checkpoint(load_path)
         super().load_checkpoint(load_path)
@@ -170,6 +223,8 @@ class FSDPVlaSftWorker(FSDPSftWorker):
             torch.distributed.barrier()
 
     def get_max_steps_per_epoch(self):
+        if isinstance(self.data_loader, OpenPIODSDataLoader):
+            return None
         if self.data_loader is None:
             return 0
         model_type = SupportedModel(self.cfg.actor.model.model_type)

@@ -34,6 +34,7 @@ from rlinf.algorithms.losses import compute_ppo_critic_loss
 from rlinf.config import SupportedModel
 from rlinf.hybrid_engines.fsdp.utils import get_fsdp_wrap_policy
 from rlinf.models import get_model, register_model
+from rlinf.models.embodiment.base_policy import ForwardType
 from rlinf.models.embodiment.modules.rlt_token_transformer import (
     RLTTokenTransformer,
 )
@@ -96,6 +97,227 @@ class _ImagePreprocessingPi0(Pi0):
 
     def velocity_from_suffix(self, suffix):
         return suffix
+
+
+class _TinySFTPi0(Pi0):
+    """Real action embeddings and Gemma attention with a small state prefix."""
+
+    def __init__(self, pi05: bool):
+        from rlinf.models.embodiment.openpi.modules import gemma
+
+        torch.nn.Module.__init__(self)
+        self.pi05 = pi05
+        self.embed_dtype = torch.float32
+        self.action_dim = 4
+        self.action_horizon = 4
+        width = 8
+        config = gemma.Config(
+            width=width,
+            depth=1,
+            mlp_dim=16,
+            num_heads=2,
+            num_kv_heads=1,
+            head_dim=4,
+        )
+        self.prefix_proj = torch.nn.Linear(self.action_dim, width)
+        self.llm = gemma.Module(
+            [config, config],
+            embed_dtype="float32",
+            adarms=[False, pi05],
+            use_gradient_checkpointing=False,
+        )
+        self.action_in_proj = torch.nn.Linear(self.action_dim, width)
+        self.action_out_proj = torch.nn.Linear(width, self.action_dim)
+        if pi05:
+            self.time_mlp_in = torch.nn.Linear(width, width)
+            self.time_mlp_out = torch.nn.Linear(width, width)
+            with torch.no_grad():
+                for module in self.llm.modules():
+                    if isinstance(module, gemma.RMSNorm) and module.adaptive:
+                        module.ada_modulation.bias[-width:].fill_(1.0)
+        else:
+            self.state_proj = torch.nn.Linear(self.action_dim, width)
+            self.action_time_mlp_in = torch.nn.Linear(2 * width, width)
+            self.action_time_mlp_out = torch.nn.Linear(width, width)
+        self._init_weights()
+        self._init_rlinf_runtime(
+            num_steps=2,
+            action_env_dim=2,
+            action_chunk=2,
+            config_name="",
+            state_indices=None,
+            rlt_cfg=None,
+        )
+
+    def embed_prefix(self, observation):
+        tokens = self.prefix_proj(observation.state)[:, None]
+        mask = torch.ones(tokens.shape[:2], dtype=torch.bool)
+        return tokens, mask, torch.zeros(1, dtype=torch.bool)
+
+
+def _tiny_sft_observation():
+    from rlinf.models.embodiment.openpi.modules.model import IMAGE_KEYS, Observation
+
+    return Observation(
+        images={key: torch.zeros(2, 224, 224, 3) for key in IMAGE_KEYS},
+        image_masks={key: torch.ones(2, dtype=torch.bool) for key in IMAGE_KEYS},
+        state=torch.tensor([[0.3, 0.5, 0.7, 0.9], [-0.2, 0.4, -0.6, 0.8]]),
+    )
+
+
+def _sft_loss_and_gradients(policy, data, *, chunk_loss=False):
+    policy.zero_grad(set_to_none=True)
+    actions = data["actions"] if isinstance(data, dict) else data[1]
+    actions.grad = None
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(2401)
+        loss = policy(
+            forward_type=ForwardType.SFT,
+            data=data,
+            use_action_chunk_loss=chunk_loss,
+        )
+    loss.backward()
+    gradients = {
+        name: parameter.grad.clone()
+        for name, parameter in policy.named_parameters()
+        if parameter.grad is not None
+    }
+    return loss.detach(), gradients, actions.grad
+
+
+@pytest.mark.parametrize("pi05", [False, True])
+@pytest.mark.parametrize("chunk_loss", [False, True])
+def test_openpi_sft_all_valid_mask_preserves_legacy_loss_and_gradients(
+    pi05, chunk_loss
+):
+    policy = _TinySFTPi0(pi05)
+    observation = _tiny_sft_observation()
+    actions = torch.randn(2, 4, 4, requires_grad=True)
+    reference = _sft_loss_and_gradients(
+        policy, (observation, actions), chunk_loss=chunk_loss
+    )
+    unmasked = _sft_loss_and_gradients(
+        policy, {"observation": observation, "actions": actions}, chunk_loss=chunk_loss
+    )
+    masked = _sft_loss_and_gradients(
+        policy,
+        {
+            "observation": observation,
+            "actions": actions,
+            "action_mask": torch.ones(2, 4, dtype=torch.bool),
+        },
+        chunk_loss=chunk_loss,
+    )
+    for actual in (unmasked, masked):
+        torch.testing.assert_close(actual[0], reference[0])
+        torch.testing.assert_close(actual[1], reference[1])
+        torch.testing.assert_close(actual[2], reference[2])
+
+
+@pytest.mark.parametrize("pi05", [False, True])
+def test_openpi_sft_masked_targets_cannot_change_loss_or_gradients(pi05):
+    policy = _TinySFTPi0(pi05)
+    observation = _tiny_sft_observation()
+    mask = torch.tensor([[True, True, False, False], [True, True, True, False]])
+    actions = torch.randn(2, 4, 4, requires_grad=True)
+    corrupted = actions.detach().clone()
+    corrupted[~mask] = float("nan")
+    corrupted.requires_grad_()
+    results = [
+        _sft_loss_and_gradients(
+            policy,
+            {"observation": observation, "actions": target, "action_mask": mask},
+        )
+        for target in (actions, corrupted)
+    ]
+    torch.testing.assert_close(results[0][0], results[1][0], rtol=0, atol=0)
+    torch.testing.assert_close(results[0][1], results[1][1], rtol=0, atol=0)
+    torch.testing.assert_close(results[0][2], results[1][2], rtol=0, atol=0)
+    assert bool(torch.isfinite(results[0][0]))
+    assert torch.count_nonzero(results[0][2][mask]) > 0
+    assert torch.count_nonzero(results[0][2][~mask]) == 0
+
+
+@pytest.mark.parametrize("pi05", [False, True])
+def test_openpi_sft_attention_excludes_masked_suffix_noise(pi05):
+    policy = _TinySFTPi0(pi05)
+    observation = _tiny_sft_observation()
+    actions = torch.randn(2, 4, 4)
+    mask = torch.tensor([[True, False, False, False], [True, True, False, False]])
+    noise = torch.randn_like(actions)
+    changed_noise = noise.clone()
+    changed_noise[~mask] += 100.0
+    losses = [
+        policy.compute_loss(
+            observation,
+            actions,
+            noise=value,
+            time=torch.full((2,), 0.5),
+            action_mask=mask,
+        )
+        for value in (noise, changed_noise)
+    ]
+    torch.testing.assert_close(losses[0], losses[1], rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("pi05", [False, True])
+def test_openpi_sft_mask_weights_samples_equally(pi05):
+    policy = _TinySFTPi0(pi05)
+    observation = _tiny_sft_observation()
+    actions = torch.randn(2, 4, 4)
+    mask = torch.tensor([[True, False, False, False], [True, True, True, True]])
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(2401)
+        per_element = policy.compute_loss(
+            observation, actions, train=True, action_mask=mask
+        )
+    expected = torch.stack(
+        [per_element[index, valid].mean() for index, valid in enumerate(mask)]
+    ).mean()
+    actual, _, _ = _sft_loss_and_gradients(
+        policy, {"observation": observation, "actions": actions, "action_mask": mask}
+    )
+    torch.testing.assert_close(actual, expected)
+    assert not torch.isclose(expected, per_element[mask].mean())
+
+
+@pytest.mark.parametrize(
+    "mask,error,message",
+    [
+        (torch.ones(2, 4), TypeError, "boolean"),
+        (torch.ones(2, 3, dtype=torch.bool), ValueError, "shape"),
+        (
+            torch.tensor([[True, False, False, False], [False, False, False, False]]),
+            ValueError,
+            "every sample",
+        ),
+    ],
+)
+def test_openpi_sft_rejects_invalid_action_masks(mask, error, message):
+    policy = _TinySFTPi0(True)
+    with pytest.raises(error, match=message):
+        policy(
+            forward_type=ForwardType.SFT,
+            data={
+                "observation": _tiny_sft_observation(),
+                "actions": torch.randn(2, 4, 4),
+                "action_mask": mask,
+            },
+        )
+
+
+def test_openpi_sft_mask_requires_rlt_disabled():
+    policy = _TinySFTPi0(True)
+    policy.rlt_cfg = SimpleNamespace(use_rlt=True)
+    with pytest.raises(ValueError, match="use_rlt=False"):
+        policy(
+            forward_type=ForwardType.SFT,
+            data={
+                "observation": _tiny_sft_observation(),
+                "actions": torch.randn(2, 4, 4),
+                "action_mask": torch.ones(2, 4, dtype=torch.bool),
+            },
+        )
 
 
 @pytest.mark.skipif(

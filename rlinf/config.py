@@ -1673,7 +1673,25 @@ def validate_sft_cfg(cfg: DictConfig) -> DictConfig:
     )
 
     with open_dict(cfg):
-        if cfg.data.get("train_data_paths", None) is None:
+        if cfg.data.get("train_data_source") == "ods":
+            if (
+                cfg.data.get("train_data_paths") is not None
+                or cfg.data.get("num_workers", 0) != 0
+                or cfg.data.get("stateful_loader", False)
+            ):
+                raise ValueError(
+                    "ODS requires null train_data_paths, num_workers=0 and stateful_loader=false."
+                )
+            if (
+                cfg.runner.get("max_steps", -1) <= 0
+                or cfg.runner.get("max_epochs", -1) > 0
+            ):
+                raise ValueError("ODS requires positive max_steps and no epoch limit.")
+            if cfg.actor.model.model_type != SupportedModel.OPENPI.value:
+                raise ValueError("ODS SFT currently supports only OpenPI.")
+            if cfg.runner.get("val_check_interval", -1) > 0:
+                raise ValueError("ODS VLA SFT uses the standalone evaluation entry.")
+        elif cfg.data.get("train_data_paths", None) is None:
             # if train_data_paths is None, the code will just eval the model
             assert cfg.data.get("val_data_paths", None) is not None, (
                 "the data.train_data_paths is None, so data.val_data_paths is required"

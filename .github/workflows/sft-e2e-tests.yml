@@ -33,6 +33,8 @@ jobs:
           source tests/e2e_tests/embodied/prepare_stack_cube.sh
           export STACK_CUBE_TRAIN_DATA="$STACK_CI_RUN/split/train"
           bash tests/e2e_tests/sft/run_stack_cube_resume.sh
+          export ODS_SIM_PYTHONPATH="$REPO_PATH"
+          bash tests/e2e_tests/sft/run_stack_cube_ods.sh
           export STACK_CUBE_SFT_MODEL="$STACK_CI_RUN/sft/ci-test/checkpoints/global_step_2"
           bash tests/e2e_tests/embodied/run.sh embodichain_stack_cube_ppo_openpi_pi05
 

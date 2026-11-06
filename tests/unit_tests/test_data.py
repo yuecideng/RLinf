@@ -4472,3 +4472,308 @@ def test_openpi_stateful_factory_preserves_transforms(monkeypatch, openpi_sft_cf
     assert observation.state.shape == (2, 32)
     assert actions.shape == (2, 10, 32)
     assert torch.count_nonzero(actions[:, :, 7:]) == 0
+
+
+class _ODSCountedSampler:
+    def __init__(self):
+        self.draw_sizes = []
+
+    def __call__(self, size):
+        self.draw_sizes.append(size)
+        return tuple(range(size))
+
+
+def test_ods_source_draw_waits_for_every_rank_and_counts_only_global_commits():
+    from rlinf.data.datasets.ods import ODSBatchCoordinator
+
+    coordinator = ODSBatchCoordinator(world_size=2, global_batch_size=8, start_step=7)
+    sampler = _ODSCountedSampler()
+    assert coordinator.expected_step == 7
+    coordinator.request(1, 7)
+    coordinator.request(1, 7)
+    assert coordinator.ready_step is None
+    with pytest.raises(RuntimeError, match="ready"):
+        coordinator.draw(sampler)
+    assert sampler.draw_sizes == []
+    coordinator.request(0, 7)
+    assert coordinator.ready_step == 7
+    assert coordinator.draw(sampler) == tuple(range(8))
+    assert coordinator.ready_step is None
+    assert coordinator.delivered_chunks == coordinator.committed_chunks == 0
+    coordinator.request(0, 7)
+    with pytest.raises(RuntimeError, match="ready"):
+        coordinator.draw(sampler)
+    assert sampler.draw_sizes == [8]
+    assert coordinator.mark_delivered(7)
+    assert not coordinator.mark_delivered(7)
+    assert coordinator.delivered_chunks == 8
+    assert not coordinator.commit(0, 7)
+    assert not coordinator.commit(0, 7)
+    assert coordinator.expected_step == 7
+    assert coordinator.committed_chunks == 0
+    assert coordinator.commit(1, 7)
+    assert coordinator.expected_step == 8
+    assert coordinator.committed_chunks == 8
+    for rank in (0, 1):
+        coordinator.request(rank, 7)
+        assert not coordinator.commit(rank, 7)
+    assert not coordinator.mark_delivered(7)
+    assert coordinator.ready_step is None
+    assert sampler.draw_sizes == [8]
+    assert coordinator.delivered_chunks == coordinator.committed_chunks == 8
+
+
+def test_ods_source_buffers_committed_rank_requests_without_drawing_ahead():
+    from rlinf.data.datasets.ods import ODSBatchCoordinator
+
+    coordinator = ODSBatchCoordinator(world_size=2, global_batch_size=4)
+    sampler = _ODSCountedSampler()
+    for rank in (0, 1):
+        coordinator.request(rank, 0)
+    coordinator.draw(sampler)
+    coordinator.mark_delivered(0)
+    coordinator.commit(0, 0)
+    coordinator.request(0, 1)
+    coordinator.request(0, 1)
+    assert coordinator.ready_step is None
+    assert coordinator.expected_step == 0
+    with pytest.raises(RuntimeError, match="commit its current"):
+        coordinator.request(1, 1)
+    with pytest.raises(ValueError, match="Expected step"):
+        coordinator.request(0, 2)
+    assert sampler.draw_sizes == [4]
+    assert coordinator.commit(1, 0)
+    assert coordinator.expected_step == 1
+    assert coordinator.ready_step is None
+    coordinator.request(1, 1)
+    assert coordinator.ready_step == 1
+    coordinator.draw(sampler)
+    coordinator.mark_delivered(1)
+    assert sampler.draw_sizes == [4, 4]
+    assert coordinator.delivered_chunks == 8
+    assert coordinator.committed_chunks == 4
+    coordinator.commit(1, 1)
+    coordinator.request(1, 2)
+    assert coordinator.commit(0, 1)
+    coordinator.request(0, 2)
+    assert coordinator.ready_step == 2
+    assert coordinator.committed_chunks == 8
+    assert sampler.draw_sizes == [4, 4]
+
+
+def test_ods_source_sampler_failure_is_latched_without_delivery_or_commit():
+    from rlinf.data.datasets.ods import ODSBatchCoordinator
+
+    coordinator = ODSBatchCoordinator(world_size=1, global_batch_size=3)
+    calls = []
+
+    def broken_sampler(size):
+        calls.append(size)
+        assert coordinator.ready_step is None
+        raise ValueError("source sampling failed")
+
+    coordinator.request(0, 0)
+    with pytest.raises(ValueError, match="source sampling failed"):
+        coordinator.draw(broken_sampler)
+    assert coordinator.failed
+    coordinator.request(0, 0)
+    assert coordinator.ready_step is None
+    with pytest.raises(RuntimeError, match="ready"):
+        coordinator.draw(broken_sampler)
+    with pytest.raises(RuntimeError, match="successful ODS draw"):
+        coordinator.mark_delivered(0)
+    with pytest.raises(RuntimeError, match="undelivered"):
+        coordinator.commit(0, 0)
+    assert calls == [3]
+    assert coordinator.expected_step == 0
+    assert coordinator.delivered_chunks == coordinator.committed_chunks == 0
+
+
+def test_ods_source_rejects_delivery_and_optimizer_ack_before_sampling():
+    from rlinf.data.datasets.ods import ODSBatchCoordinator
+
+    coordinator = ODSBatchCoordinator(world_size=1, global_batch_size=2)
+    coordinator.request(0, 0)
+    with pytest.raises(RuntimeError, match="successful ODS draw"):
+        coordinator.mark_delivered(0)
+    with pytest.raises(RuntimeError, match="undelivered"):
+        coordinator.commit(0, 0)
+    with pytest.raises(ValueError, match="committed step"):
+        coordinator.commit(0, 1)
+    with pytest.raises(ValueError, match="delivered step"):
+        coordinator.mark_delivered(1)
+    assert coordinator.ready_step == 0
+    assert coordinator.delivered_chunks == coordinator.committed_chunks == 0
+
+
+@pytest.mark.parametrize(
+    "configuration",
+    [
+        {"world_size": 0, "global_batch_size": 2},
+        {"world_size": True, "global_batch_size": 2},
+        {"world_size": 2, "global_batch_size": 0},
+        {"world_size": 2, "global_batch_size": 3},
+        {"world_size": 2, "global_batch_size": 4, "start_step": -1},
+    ],
+)
+def test_ods_source_rejects_invalid_batch_topology(configuration):
+    from rlinf.data.datasets.ods import ODSBatchCoordinator
+
+    with pytest.raises(ValueError):
+        ODSBatchCoordinator(**configuration)
+
+
+@pytest.mark.parametrize("rank,step", [(-1, 0), (2, 0), (True, 0), (0, -1), (0, True)])
+def test_ods_source_validates_message_rank_and_step(rank, step):
+    from rlinf.data.datasets.ods import ODSBatchCoordinator
+
+    coordinator = ODSBatchCoordinator(world_size=2, global_batch_size=4)
+    with pytest.raises(ValueError):
+        coordinator.request(rank, step)
+    with pytest.raises(ValueError):
+        coordinator.commit(rank, step)
+
+
+def test_ods_concurrency_selection_excludes_failed_and_uses_smallest_within95_percent():
+    from toolkits.ods.calibrate_sft import select_concurrency
+
+    def candidate(producers, rate, passed=True):
+        return {
+            "producer_envs": producers,
+            "passed": passed,
+            "measurement": {"rates": {"training_chunks_per_wall_second": rate}},
+        }
+
+    rows = [
+        candidate(1, 1500, passed=False),
+        candidate(8, 1000),
+        candidate(4, 980),
+        candidate(2, 950),
+        candidate(1, 949),
+    ]
+    assert select_concurrency(rows)["producer_envs"] == 2
+    with pytest.raises(RuntimeError, match="No ODS concurrency candidate"):
+        select_concurrency([candidate(1, 2000, passed=False)])
+
+
+def test_ods_sdk_projection_keeps_only_current_observations_and_future_action_mask():
+    td = pytest.importorskip("tensordict")
+    sdk = pytest.importorskip("embodichain.data_pipeline.datasets")
+    from rlinf.workers.data.ods_worker import project_openpi_batch
+
+    data = td.TensorDict(
+        {
+            "obs": {
+                "sensor": {
+                    name: {
+                        "color": torch.arange(24, dtype=torch.uint8).reshape(
+                            1, 3, 2, 1, 4
+                        )
+                    }
+                    for name in ("front", "wrist")
+                },
+                "robot": {"eef_state": torch.ones(1, 3, 8)},
+            },
+            "actions": torch.ones(1, 3, 7),
+            "valid": torch.ones(1, 3, dtype=torch.bool),
+        },
+        batch_size=[1, 3],
+    )
+    source = sdk.TensorDataSource(
+        data,
+        schema={"action": {"semantics": "policy_request", "step_dt": 0.05}},
+        source_id="padding-test",
+    )
+    batch = source.sample_context(
+        4,
+        sdk.SequenceSpecCfg(history_length=1, prediction_horizon=10),
+        generator=torch.Generator().manual_seed(0),
+    )
+    result = project_openpi_batch(batch, ["overall task"] * 4)
+    assert set(result) == {
+        "front",
+        "wrist",
+        "state",
+        "actions",
+        "action_mask",
+        "prompts",
+    }
+    assert result["front"].shape == (4, 2, 1, 3)
+    assert result["state"].shape == (4, 8)
+    assert result["actions"].shape == (4, 10, 7)
+    assert torch.equal(result["action_mask"], batch["loss_mask"])
+    assert not result["action_mask"][:, 3:].any()
+    assert result["action_mask"].any(1).all()
+    assert torch.equal(
+        result["front"], batch["obs", "sensor", "front", "color"][:, 0, ..., :3]
+    )
+    assert all(
+        value.device.type == "cpu"
+        for value in result.values()
+        if torch.is_tensor(value)
+    )
+
+
+def _ods_encoder_batch():
+    return {
+        "front": torch.zeros(2, 8, 10, 3, dtype=torch.uint8),
+        "wrist": torch.full((2, 8, 10, 3), 255, dtype=torch.uint8),
+        "state": torch.full((2, 8), 0.25),
+        "actions": torch.full((2, 10, 7), 0.25),
+        "action_mask": torch.tensor([[True] * 10, [True] + [False] * 9]),
+        "prompts": ["stack the red block", "stack the green block"],
+    }
+
+
+def test_ods_encoder_preserves_fixed_transforms_and_mask(openpi_sft_cfg):
+    from rlinf.data.datasets.openpi.ods import OpenPIODSEncoder
+
+    cfg, _ = openpi_sft_cfg
+    encoded = OpenPIODSEncoder(cfg)(_ods_encoder_batch())
+    observation = encoded["observation"]
+    assert encoded["actions"].shape == (2, 10, 32)
+    assert observation.state.shape == (2, 32)
+    assert torch.count_nonzero(encoded["actions"][..., 7:]) == 0
+    assert torch.count_nonzero(observation.state[..., 8:]) == 0
+    torch.testing.assert_close(
+        encoded["actions"][..., :7],
+        torch.full_like(encoded["actions"][..., :7], 0.25),
+        atol=1e-5,
+        rtol=0,
+    )
+    assert torch.equal(encoded["action_mask"], _ods_encoder_batch()["action_mask"])
+    assert not torch.equal(
+        observation.images["base_0_rgb"], observation.images["left_wrist_0_rgb"]
+    )
+    assert not torch.equal(
+        observation.tokenized_prompt[0], observation.tokenized_prompt[1]
+    )
+
+
+def test_ods_encoder_warns_once_for_varying_targets_with_constant_stats(
+    openpi_sft_cfg, caplog
+):
+    from rlinf.data.datasets.openpi.ods import OpenPIODSEncoder
+
+    cfg, _ = openpi_sft_cfg
+    path = Path(cfg.actor.model.openpi_data.norm_stats_path)
+    stats = json.loads(path.read_text())
+    for key in ("q01", "q99"):
+        stats["norm_stats"]["actions"][key][3] = 0.0
+    path.write_text(json.dumps(stats))
+    encoder = OpenPIODSEncoder(cfg)
+    batch = _ods_encoder_batch()
+    batch["actions"][..., 3] = 0.0
+    batch["actions"][1, 9, 3] = 0.5
+    encoder(batch)
+    assert "ODS action statistics have zero range" not in caplog.text
+    batch["actions"][0, 0, 3] = 0.1
+    encoder(batch)
+    encoder(batch)
+    assert (
+        sum(
+            "ODS action statistics have zero range" in record.message
+            for record in caplog.records
+        )
+        == 1
+    )
