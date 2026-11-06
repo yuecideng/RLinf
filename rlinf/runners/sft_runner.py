@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 import os
+from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Union
 
 from omegaconf.dictconfig import DictConfig
@@ -32,18 +35,34 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _write_checkpoint_metadata(save_path: str, metadata: dict) -> None:
+    """Publish one checkpoint status without exposing a partial JSON file."""
+    path = Path(save_path) / "checkpoint_metadata.json"
+    temporary = path.with_suffix(".json.tmp")
+    try:
+        with temporary.open("w") as stream:
+            json.dump(metadata, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 class SFTRunner:
     def __init__(
         self,
         cfg: DictConfig,
         actor: Union["FSDPSftWorker", "FSDPRewardWorker"],
         run_timer: Optional[ScopedTimer] = None,
+        stop_condition: Callable[[int], bool] | None = None,
     ) -> None:
         self.cfg = cfg
         self.actor = actor
 
         # this timer checks if we should stop training
         self.run_timer = run_timer
+        self.stop_condition = stop_condition
 
         self.consumed_samples = 0
         # the step here is GRPO step
@@ -77,6 +96,10 @@ class SFTRunner:
 
     def run(self) -> None:
         start_step = self.global_step
+        sparse_training_state = (
+            self.cfg.actor.get("fsdp_config", {}).get("training_state_save_interval")
+            is not None
+        )
         global_pbar = tqdm(
             initial=start_step,
             total=self.max_steps,
@@ -103,7 +126,7 @@ class SFTRunner:
                     run_time_exceeded=False,
                 )
 
-                if save_model:
+                if save_model and not sparse_training_state:
                     self._save_checkpoint()
 
                 should_stop = False
@@ -117,6 +140,11 @@ class SFTRunner:
                         )
                         if best_val_acc_improved:
                             self._save_checkpoint(is_best=True)
+
+                if sparse_training_state and (
+                    save_model or (should_stop and self.cfg.runner.save_interval > 0)
+                ):
+                    self._save_checkpoint(force_training_state=should_stop)
 
             time_metrics = self.timer.consume_durations()
             time_metrics["training"] = actor_handle.consume_duration()
@@ -145,7 +173,10 @@ class SFTRunner:
 
             global_pbar.set_postfix(logging_metrics, refresh=False)
             global_pbar.update(1)
-            if should_stop:
+            if should_stop or (
+                self.stop_condition is not None
+                and self.stop_condition(self.global_step)
+            ):
                 break
 
         if self.early_stop is not None and self.early_stop.best_val_acc > 0:
@@ -177,21 +208,47 @@ class SFTRunner:
         logger.info(f"Eval metrics: {evaluate_metrics}")
         self.metric_logger.finish()
 
-    def _save_checkpoint(self, is_best: bool = False) -> None:
+    def _save_checkpoint(
+        self, is_best: bool = False, *, force_training_state: bool = False
+    ) -> None:
         checkpoint_root = os.path.join(
             self.cfg.runner.logger.log_path,
             self.cfg.runner.logger.experiment_name,
         )
-        if is_best:
-            base_output_dir = os.path.join(checkpoint_root, "checkpoints/best_model")
-        else:
-            base_output_dir = os.path.join(
-                checkpoint_root,
-                f"checkpoints/global_step_{self.global_step}",
-            )
+        relative_path = (
+            "checkpoints/best_model"
+            if is_best
+            else f"checkpoints/global_step_{self.global_step}"
+        )
+        base_output_dir = os.path.join(checkpoint_root, relative_path)
         actor_save_path = os.path.join(base_output_dir, "actor")
         os.makedirs(actor_save_path, exist_ok=True)
-        self.actor.save_checkpoint(actor_save_path, self.global_step).wait()
+        fsdp_config = self.cfg.actor.get("fsdp_config", {})
+        state_interval = fsdp_config.get("training_state_save_interval")
+        if state_interval is None:
+            self.actor.save_checkpoint(actor_save_path, self.global_step).wait()
+        else:
+            from rlinf.hybrid_engines.fsdp.strategy.checkpoint import (
+                should_save_training_state,
+            )
+
+            force_training_state |= self.global_step >= self.max_steps
+            metadata = {
+                "step": self.global_step,
+                "save_training_state": should_save_training_state(
+                    self.global_step, state_interval, force=force_training_state
+                ),
+                "checkpoint_format": fsdp_config.get("checkpoint_format", "dcp"),
+                "complete": False,
+            }
+            _write_checkpoint_metadata(actor_save_path, metadata)
+            self.actor.save_checkpoint(
+                actor_save_path,
+                self.global_step,
+                force_training_state=force_training_state,
+            ).wait()
+            metadata["complete"] = True
+            _write_checkpoint_metadata(actor_save_path, metadata)
         if is_best and self.early_stop is not None:
             logger.info(
                 f"Saved best model (val_acc={self.early_stop.best_val_acc:.4f}) to {base_output_dir}"
@@ -201,6 +258,14 @@ class SFTRunner:
         self.num_steps_per_epoch = self.actor.get_max_steps_per_epoch().wait()[0]
         max_epochs = self.cfg.runner.get("max_epochs", -1)
         max_steps = self.cfg.runner.get("max_steps", -1)
+
+        if self.num_steps_per_epoch is None:
+            if max_steps <= 0 or max_epochs > 0:
+                raise ValueError(
+                    "Streaming SFT requires positive max_steps and no epoch limit."
+                )
+            self.max_steps = max_steps
+            return
 
         step_limits = []
         if max_epochs > 0:
@@ -213,5 +278,7 @@ class SFTRunner:
         self.max_steps = min(step_limits) if step_limits else self.num_steps_per_epoch
 
     @property
-    def epoch(self) -> int:
+    def epoch(self) -> int | None:
+        if self.num_steps_per_epoch is None:
+            return None
         return self.global_step // self.num_steps_per_epoch

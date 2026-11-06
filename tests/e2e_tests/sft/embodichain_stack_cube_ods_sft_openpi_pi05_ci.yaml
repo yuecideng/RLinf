@@ -1,0 +1,43 @@
+# Two online fills, two optimizer steps and a fresh-source resume.
+defaults:
+- embodichain_stack_cube_ods_sft_openpi_pi05
+- _self_
+
+hydra:
+  searchpath:
+  - file://${oc.env:REPO_PATH}/examples/sft/config
+
+cluster:
+  component_placement:
+    actor:
+      placement: ${oc.env:STACK_CUBE_ODS_SFT_PLACEMENT,0-1}
+    data:
+      placement: ${oc.env:STACK_CUBE_ODS_DATA_PLACEMENT,2}
+
+runner:
+  logger:
+    log_path: ${oc.env:STACK_CI_RUN}/ods_sft
+    experiment_name: ci-test
+  max_steps: 2
+  save_interval: 2
+
+data:
+  ods:
+    calibration: true
+    recipe_path: null
+    producer_envs: 1
+    calibration_refill_step: 1
+    max_wall_seconds: 900.0
+    pilot_cache:
+      buffer_size: 1
+      episode_sample_budget: 2
+      episode_sample_hard_limit: 2
+    flow:
+      max_generated_episodes: 2
+
+actor:
+  global_batch_size: 2
+  model:
+    model_path: ${oc.env:STACK_CUBE_SFT_MODEL}
+  fsdp_config:
+    training_state_save_interval: 1

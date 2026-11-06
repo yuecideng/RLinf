@@ -1,0 +1,68 @@
+{
+  "configuration": {
+    "episode_sample_budget": 87,
+    "episode_sample_hard_limit": 128,
+    "balance_chunks_per_episode": 87.79611347208721,
+    "batch_size": 32,
+    "producer_envs": 2,
+    "buffer_size": 10,
+    "cache_bytes": 3147420000,
+    "initial_chunk_budget": 870,
+    "initial_max_updates": 27,
+    "initial_remainder_chunks": 6,
+    "refill_remaining_chunks": 571,
+    "active_chunks_per_second_cap": 6.357319143536737,
+    "training_chunks_per_second_target": 6.299672543745771,
+    "training_updates_per_second_target": 0.19686476699205535,
+    "publication_episodes_per_second_target": 0.07241002923845714,
+    "training_duty_fraction": 0.9909322469913167,
+    "producer_duty_fraction": 1.0,
+    "expected_training_throttle_fraction": 0.009067753008683297,
+    "expected_producer_throttle_fraction": 0.0,
+    "profile_id": "pi05-stack-cube-h1-h10-c5-provisional-v1",
+    "profile_scope": "PI0.5 Stack Cube; two cameras; H1/H10/C5; episode-uniform chunks; <=450 physical steps",
+    "profile_qualified": false,
+    "measurement_scope": "concurrent GPU0 producer and GPU4/5 two-rank FSDP run; completed generation and optimizer intervals",
+    "reasons": [
+      "Provisional profile: sampling bounds require independent qualification.",
+      "Refill sizing is a latency heuristic; validate subsequent publication spacing and remeasure after pacing changes."
+    ],
+    "end_of_supply_rule": "Stop when remaining unlocked per-episode quota cannot fund one full batch."
+  },
+  "profile": {
+    "profile_id": "pi05-stack-cube-h1-h10-c5-provisional-v1",
+    "scope": "PI0.5 Stack Cube; two cameras; H1/H10/C5; episode-uniform chunks; <=450 physical steps",
+    "qualified": false,
+    "min_chunks_per_episode": 32,
+    "max_chunks_per_episode": 128,
+    "hard_max_chunks_per_episode": 128,
+    "latency_safety_factor": 1.25
+  },
+  "measurement": {
+    "norm_stats_sha256": "8cd55a9435edcf855d17a0967a65426663dc510588812d422b6884fae093f2a4",
+    "schema_sha256": "eda5016bd4e0c64e7a5b725a3fe5e5c16d982b6cdd62a82cfa60ce68741882e4",
+    "rates": {
+      "accepted_episodes_per_active_second": 0.07241002923845714,
+      "accepted_episodes_per_wall_second": 0.06379363664683534,
+      "training_chunks_per_active_second": 6.357319143536737,
+      "training_chunks_per_wall_second": 5.869014571508851,
+      "window_seconds": 125.40435724472627
+    },
+    "first_publication_p95_seconds": 71.7325897612609,
+    "publication_cycles": 2,
+    "completed_updates": 23,
+    "completed_chunks": 736,
+    "learner_active_seconds": 115.77207048796117,
+    "producer_active_seconds": 110.48193301586434,
+    "active_overlap_lower_bound_seconds": 100.84964625909925,
+    "complete_generations": [
+      2
+    ],
+    "production_wall_rate_scope": "selected complete generations inside learner window",
+    "published_episodes_per_wall_second": 0.06379363664683534,
+    "window_start_monotonic": 3117823.45893554,
+    "window_end_monotonic": 3117948.863292785,
+    "bytes_per_episode": 314742000,
+    "owner_peak_rss_bytes": 5356892160
+  }
+}

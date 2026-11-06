@@ -1,0 +1,89 @@
+# Evaluate exported SFT weights on one frozen 27-request validation cohort.
+defaults:
+- env/embodichain_stack_cube@env.eval
+- model/pi0_5@rollout.model
+- override hydra/job_logging: stdout
+- _self_
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+  - file://${oc.env:REPO_PATH}/examples/embodiment/config
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    rollout:
+      node_group: policy
+      placement: "4"
+    env:
+      node_group: simulation
+      placement: "0"
+  node_groups:
+  - label: policy
+    node_ranks: all
+    env_configs:
+    - node_ranks: all
+      python_interpreter_path: ${oc.env:STACK_CUBE_MODEL_PYTHON}
+      env_vars:
+      - PYTHONPATH: ${oc.env:REPO_PATH}
+      - JAX_PLATFORMS: cpu
+      - RLINF_PATH_ENV_MERGE_MODE: override
+  - label: simulation
+    node_ranks: all
+    env_configs:
+    - node_ranks: all
+      python_interpreter_path: ${oc.env:STACK_CUBE_ENV_PYTHON}
+      env_vars:
+      - PYTHONPATH: ${oc.env:ODS_SIM_PYTHONPATH}
+      - RLINF_PATH_ENV_MERGE_MODE: override
+
+runner:
+  task_type: embodied_eval
+  only_eval: true
+  val_check_interval: -1
+  logger:
+    log_path: ../results
+    project_name: rlinf
+    experiment_name: embodichain_stack_cube_pi05_eval
+    logger_backends: [tensorboard]
+
+env:
+  group_name: EnvGroup
+  eval:
+    total_num_envs: 27
+    rollout_epoch: 1
+    request_manifest: ${oc.env:STACK_CUBE_PPO_VAL_REQUESTS}
+    auto_reset: false
+    ignore_terminations: true
+    use_fixed_reset_state_ids: true
+    is_eval: true
+    video_cfg:
+      save_video: true
+      video_base_dir: ${runner.logger.log_path}/video/eval
+
+rollout:
+  group_name: RolloutGroup
+  backend: huggingface
+  seed: 0
+  enable_offload: false
+  pipeline_stage_num: 1
+  model:
+    model_path: ${oc.env:STACK_CUBE_SFT_MODEL}
+    action_dim: 7
+    num_action_chunks: 5
+    num_steps: 5
+    openpi:
+      task: eval
+      config_name: pi05_isaaclab_stack_cube
+      action_horizon: 10
+      action_chunk: 5
+      action_env_dim: 7
+      num_images_in_input: 2
+      eval_sft_image_crop: true
+      discrete_state_input: false
+      torch_compile: false
+    openpi_data:
+      norm_stats_path: ${oc.env:STACK_CUBE_NORM_STATS}
