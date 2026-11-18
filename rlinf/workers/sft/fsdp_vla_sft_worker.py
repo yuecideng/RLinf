@@ -135,8 +135,13 @@ class FSDPVlaSftWorker(FSDPSftWorker):
         return metrics
 
     def get_train_model_output(self, batch: Any) -> tuple[torch.Tensor, dict[str, Any]]:
+        kwargs = {}
+        if SupportedModel(self.cfg.actor.model.model_type) == SupportedModel.OPENPI:
+            kwargs["return_metrics"] = self.cfg.actor.model.openpi.get(
+                "log_sft_action_metrics", False
+            )
         with self.amp_context:
-            output = self.model(forward_type=ForwardType.SFT, data=batch)
+            output = self.model(forward_type=ForwardType.SFT, data=batch, **kwargs)
 
         if isinstance(output, torch.Tensor):
             loss = output

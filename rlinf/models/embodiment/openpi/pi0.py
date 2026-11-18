@@ -892,13 +892,19 @@ class Pi0(model.BaseModel):
         return loss, prefix_out, prefix_mask
 
     def sft_forward(
-        self, data: Any, use_action_chunk_loss: bool = False, **kwargs
+        self,
+        data: Any,
+        use_action_chunk_loss: bool = False,
+        return_metrics: bool = False,
+        **kwargs,
     ) -> torch.Tensor | dict[str, torch.Tensor]:
         """Compute SFT loss, optionally masking padded action-window targets.
 
         Dict batches may carry a boolean ``action_mask`` with shape ``[B, H]``.
         Masked loss averages valid timesteps and model action dimensions within
         each sample, then averages samples. Masked batches require RLT disabled.
+        ``return_metrics`` also reports flow MSE over real action dimensions
+        and the executed chunk, without changing the training objective.
         """
         del kwargs
         observation, actions = self._unpack_sft_batch(data)
@@ -913,12 +919,25 @@ class Pi0(model.BaseModel):
             per_element_loss = self.compute_loss(
                 observation, actions, train=True, action_mask=action_mask
             )
-            return self._reduce_sft_loss(
+        elif not self.rlt_cfg.use_rlt:
+            per_element_loss = self.compute_loss(observation, actions, train=True)
+        if not self.rlt_cfg.use_rlt:
+            loss = self._reduce_sft_loss(
                 per_element_loss, use_action_chunk_loss, action_mask
             )
-        if not self.rlt_cfg.use_rlt:
-            per_element_loss = self.compute_loss(observation, actions, train=True)
-            return self._reduce_sft_loss(per_element_loss, use_action_chunk_loss)
+            if not return_metrics:
+                return loss
+            real_dim = self.action_env_dim or per_element_loss.shape[-1]
+            detached = per_element_loss.detach()
+            return {
+                "loss": loss,
+                "flow_mse_real_actions": self._reduce_sft_loss(
+                    detached[..., :real_dim], False, action_mask
+                ),
+                "flow_mse_executed_chunk": self._reduce_sft_loss(
+                    detached, True, action_mask
+                ),
+            }
 
         per_element_loss, prefix_output, prefix_mask = (
             self._sft_forward_with_rlt_prefix(observation, actions)

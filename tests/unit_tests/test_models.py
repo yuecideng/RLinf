@@ -320,6 +320,72 @@ def test_openpi_sft_mask_requires_rlt_disabled():
         )
 
 
+@pytest.mark.parametrize("masked", [False, True])
+def test_openpi_sft_action_metrics_preserve_loss_and_gradients(masked):
+    policy = _TinySFTPi0(True)
+    observation = _tiny_sft_observation()
+    actions = torch.randn(2, 4, 4, requires_grad=True)
+    data = {"observation": observation, "actions": actions}
+    mask = torch.tensor([[True, False, False, False], [True] * 4])
+    if masked:
+        data["action_mask"] = mask
+    reference = _sft_loss_and_gradients(policy, data)
+    policy.zero_grad(set_to_none=True)
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(2401)
+        result = policy(forward_type=ForwardType.SFT, data=data, return_metrics=True)
+        torch.manual_seed(2401)
+        per_element = policy.compute_loss(
+            observation, actions, train=True, action_mask=mask if masked else None
+        )
+    if not masked:
+        mask = torch.ones_like(mask)
+    expected_real = torch.stack(
+        [per_element[row, valid, :2].mean() for row, valid in enumerate(mask)]
+    ).mean()
+    expected_chunk = torch.stack(
+        [per_element[row, :2, :2][valid[:2]].mean() for row, valid in enumerate(mask)]
+    ).mean()
+    torch.testing.assert_close(result["loss"], reference[0])
+    torch.testing.assert_close(result["flow_mse_real_actions"], expected_real)
+    torch.testing.assert_close(result["flow_mse_executed_chunk"], expected_chunk)
+    assert not result["flow_mse_real_actions"].requires_grad
+    result["loss"].backward()
+    for name, parameter in policy.named_parameters():
+        if parameter.grad is not None:
+            torch.testing.assert_close(parameter.grad, reference[1][name])
+
+
+def test_stack_cube_action_metrics_use_physical_targets_and_valid_controls():
+    from toolkits.ods.evaluate_stack_cube_actions import stack_cube_action_errors
+
+    target = torch.zeros(1, 2, 7)
+    target[..., -1] = 1
+    predicted = target.clone()
+    predicted[0, 0, 0] = 0.02
+    predicted[0, 0, 5] = torch.pi
+    predicted[0, 0, -1] = 0
+    predicted[0, 1] = float("nan")
+    metrics = stack_cube_action_errors(predicted, target, torch.tensor([[True, False]]))
+    assert metrics["valid_controls"] == 1
+    assert metrics["translation_target_error_mm_mean"] == pytest.approx(10)
+    assert metrics["rotation_target_error_deg_mean"] == pytest.approx(90)
+    assert metrics["binary_gripper_accuracy"] == 0
+
+
+def test_stack_cube_rotation_metric_compares_composed_targets():
+    from toolkits.ods.evaluate_stack_cube_actions import stack_cube_action_errors
+
+    target = torch.zeros(1, 1, 7)
+    predicted = target.clone()
+    target[..., 3] = torch.pi / 2
+    predicted[..., 4] = torch.pi / 2
+    metrics = stack_cube_action_errors(
+        predicted, target, torch.ones(1, 1, dtype=torch.bool), rotation_scale=1
+    )
+    assert metrics["rotation_target_error_deg_mean"] == pytest.approx(120)
+
+
 @pytest.mark.skipif(
     not os.environ.get("RLINF_OPENPI_TEST_MODEL_CONFIG"),
     reason="Set RLINF_OPENPI_TEST_MODEL_CONFIG to an available Pi0.5 model YAML.",

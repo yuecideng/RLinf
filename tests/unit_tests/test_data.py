@@ -4750,6 +4750,42 @@ def test_ods_encoder_preserves_fixed_transforms_and_mask(openpi_sft_cfg):
     )
 
 
+@pytest.mark.parametrize("dimension", range(8))
+def test_ods_stack_cube_state_matches_evaluation_tokens(openpi_sft_cfg, dimension):
+    from openpi import transforms
+
+    from rlinf.data.datasets.openpi.ods import OpenPIODSEncoder
+    from rlinf.models.embodiment.openpi.transforms.apply import apply_input_transform
+    from rlinf.models.embodiment.openpi.transforms.pipeline import (
+        build_openpi_transforms,
+    )
+
+    cfg, _ = openpi_sft_cfg
+    cfg.actor.model.openpi.config_name = "pi05_embodichain_stack_cube"
+    cfg.actor.model.openpi.discrete_state_input = True
+    packet = _ods_encoder_batch()
+    packet["prompts"] = [packet["prompts"][0]] * 2
+    packet["state"][1, dimension] += 0.5
+    encoded = OpenPIODSEncoder(cfg)(packet)["observation"]
+    inputs, _ = build_openpi_transforms(
+        model_path=cfg.actor.model.model_path,
+        config_name=cfg.actor.model.openpi.config_name,
+        data_kwargs=OmegaConf.to_container(cfg.actor.model.openpi_data),
+    )
+    evaluated = apply_input_transform(
+        transforms.compose(inputs),
+        {
+            "observation/image": packet["front"],
+            "observation/wrist_image": packet["wrist"],
+            "observation/state": packet["state"],
+            "prompt": packet["prompts"],
+        },
+    )
+    assert torch.equal(encoded.tokenized_prompt, evaluated["tokenized_prompt"])
+    assert torch.equal(encoded.state, evaluated["state"])
+    assert not torch.equal(encoded.tokenized_prompt[0], encoded.tokenized_prompt[1])
+
+
 def test_ods_encoder_warns_once_for_varying_targets_with_constant_stats(
     openpi_sft_cfg, caplog
 ):

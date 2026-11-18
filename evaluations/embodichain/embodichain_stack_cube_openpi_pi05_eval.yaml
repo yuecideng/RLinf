@@ -77,13 +77,13 @@ rollout:
     num_steps: 5
     openpi:
       task: eval
-      config_name: pi05_isaaclab_stack_cube
+      config_name: pi05_embodichain_stack_cube
       action_horizon: 10
       action_chunk: 5
       action_env_dim: 7
       num_images_in_input: 2
       eval_sft_image_crop: true
-      discrete_state_input: false
+      discrete_state_input: true
       torch_compile: false
     openpi_data:
       norm_stats_path: ${oc.env:STACK_CUBE_NORM_STATS}

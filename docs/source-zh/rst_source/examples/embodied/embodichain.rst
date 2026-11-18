@@ -357,9 +357,22 @@ Evaluator 保存逐集物理测量和视频。根据 validation 结果选定 che
 
 正式采集和 ODS 共用通过验收的专家执行配置，保持现有相对 EEF 控制器、精确 FK 执行、相机和整体任务指令，显式设置最少 50 个运动采样点及 2 rad/s² 加速度上限，使正式 train 请求可在验收窗口内完成。采集容量仍为 600 步；必须在 450 步内完成全部程序、至少额外执行 20 个物理 settling 控制步，并满足最后连续 20 帧稳定。Settling 只参与物理验收，监督数据保留有效 Task Program 帧。失败尝试记录审计后再尝试新请求。Train、validation 和 test 请求保持独立。
 
-每条样本只向模型提供当前双相机帧、8 维状态和整体任务指令；未来观测、专家阶段和 provenance 留在源端。ODS padding 转为 ``action_mask[B,H]``，无效后缀 token 不参与注意力和 flow-matching 损失；每条样本先按有效元素归一化，再取 batch 平均。未提供 mask 的离线 SFT 保持原行为。
+每条样本向模型提供当前双相机帧、8 维状态和整体任务指令。SFT、评估与 PPO 统一选择 ``pi05_embodichain_stack_cube``，并设置 ``discrete_state_input: true``。PI 0.5 将归一化后的全部 8 维状态编码进任务 prompt，再将连续状态张量补齐到模型维度。未来观测、专家阶段和 provenance 留在源端。ODS padding 转为 ``action_mask[B,H]``，无效后缀 token 不参与注意力和 flow-matching 损失；每条样本先按有效元素归一化，再取 batch 平均。未提供 mask 的离线 SFT 保持原行为。
+
+通过 ``train/flow_mse_real_actions`` 查看真实 7 维动作的误差，通过 ``train/flow_mse_executed_chunk`` 查看实际执行的 5 个控制步的误差。这两个指标按每条样本的有效控制步计算，保留原来的 32 维 flow 训练目标。它们衡量归一化的 flow 速度误差；解码后的命令精度使用冻结的 ODS CPU batch 单独评估：
+
+.. code-block:: bash
+
+   CUDA_VISIBLE_DEVICES=4 "$STACK_CUBE_MODEL_PYTHON" toolkits/ods/evaluate_stack_cube_actions.py \
+     --config /path/to/resolved_eval.yaml \
+     --batches /path/to/frozen_ods_batch.pt \
+     --output "$STACK_RUN/action_errors.json"
+
+使用 ``torch.save`` 保存 ``project_openpi_batch`` 返回的 packet，其中包含当前帧 ``front``/``wrist`` uint8 图像、``state[B,8]``、原始 ``actions[B,10,7]``、布尔 ``action_mask[B,10]`` 和 ``prompts``。工具报告 C5 的平移目标误差（毫米）、旋转目标之间的相对角度误差（度）、夹爪准确率和各维原始 MSE。这些指标比较专家状态下的命令，实际任务表现通过下方闭环入口评估。
 
 Checkpoint 的 ``ods_source.json`` 保存 schema、encoder、normalization 指纹及供数审计。每个源会话使用新的 ``runner.logger.experiment_name``，保留前次审计文件；恢复时设置 ``runner.resume_dir``，并让 ``runner.max_steps`` 大于已保存的 global step。训练状态与 RNG 通过现有 checkpoint 后端恢复；生产者重建源会话、缓存和配额。已交付 chunks 不退款，也不精确重放 batch 顺序。导出的权重使用现有 Ray 评估入口和离线基线相同的冻结 validation manifest 独立评估。
+
+将模型与数据配方和 checkpoint 一起保留。从仅使用图像的配方切换到原生状态输入配方会改变 encoder 契约，应从明确的初始权重建立新实验；恢复 ODS checkpoint 时使用其保存的输入契约。
 
 .. code-block:: bash
 
@@ -374,7 +387,27 @@ Checkpoint 的 ``ods_source.json`` 保存 schema、encoder、normalization 指�
 
 2026-11-06 的测量选择了两个生产环境。1、2、4 并发的稳态 wall 吞吐分别为 5.06、6.18、5.23 chunks/s；8 并发未通过物理验收。各档保持相同的固定原生 train-only 统计量、起点 checkpoint、相机和 batch 32。选中的临时 SDK 配方使用 10 条缓存轨迹，每条分配 87 次 chunk 采样，硬上限为 128。
 
-GPU 0 / GPU 4–5 的短程检查恢复 SFT 15000→15002，再恢复执行一次更新，loss 为 0.2456、0.2856、0.3176；恢复前全部 665 个活跃 Adam 状态到达 15002。冻结 27 条请求的独立 Ray 验证为 **0/27** 最终稳定成功。此结果验证流式供数、mask 和恢复接口；全预算原生 SFT 与复用 profile 的精度资格仍待验证。当前 JSON、曲线和 provenance 位于 ``examples/embodiment/results/embodichain_stack_cube_pi05/``。
+此前仅使用图像的 GPU 0 / GPU 4–5 短程检查恢复 SFT 15000→15002，再恢复执行一次更新，loss 为 0.2456、0.2856、0.3176；恢复前全部 665 个活跃 Adam 状态到达 15002。冻结 27 条请求的独立 Ray 验证为 **0/27** 最终稳定成功。此结果验证流式供数、mask 和恢复接口；全预算原生 SFT 与复用 profile 的精度资格仍待验证。当前 JSON、曲线和 provenance 位于 ``examples/embodiment/results/embodichain_stack_cube_pi05/``。
+
+在 GPU 4–5 上进行的 200 次更新对照比较了原生状态输入配方和仅使用图像的配方。两组从同一份离线 step 15000 checkpoint 恢复完整训练状态，使用 batch 32 和相同的 6,400 个新生成 ODS chunks。状态组在 GPU 0 上使用两个生产环境在线生成数据；图像组重放相同的 CPU batch。批次文件哈希及最终各 rank 的 RNG 状态均一致。对冻结的 27 条请求，两组在起点及 100 次更新时均为 0/27，最终结果如下：
+
+.. list-table:: 200 次更新对照
+   :header-rows: 1
+   :widths: 35 25 40
+
+   * - Policy 输入
+     - 最终稳定成功率
+     - C5 平移目标平均误差 / P95
+   * - 双相机
+     - 0/27（0%）
+     - 12.64 / 37.41 mm
+   * - 双相机与 8 维状态
+     - 1/27（3.70%）
+     - 13.58 / 36.36 mm
+
+动作误差使用相同的 128 个训练上下文和固定采样噪声计算，与闭环验证单独计量。逐一改变 8 个状态值均能改变训练后模型的输出，SFT 与评估的 prompt tokens 也一致。单 seed 小规模实验中的一次验证成功只能提供有限证据，仍需扩大训练与验证。
+
+后续原生数据实验从 PI0.5 base 权重初始化，两组均使用真实 8 维状态。离线组固定使用 120 条合格示范、45,168 帧，验证结果从训练前 0/27 提升至 2,500 次更新时的 12/27 和 5,000 次更新时的 17/27。采集耗时 38 分 24 秒，在 GPU 4–5 上训练耗时 4 小时 26 分 52 秒。在线组在第 1,847 次更新保存完整 checkpoint 后暂停，最终成功率和耗时对比尚未完成。本地实验 harness 另加了离线 padding mask 适配和 FP32 master 优化器状态，这些覆盖项与公开配方单独记录。证据目录中的 ``state_input_pilot.json``、``state_input_pilot.png`` 和 ``native_sft_progress.json`` 保存实测结果、指纹与适用范围。此前 pilot 的 checkpoint 缓存已按用户要求清理，记录的审计信息仍保留。
 
 正式 PPO
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

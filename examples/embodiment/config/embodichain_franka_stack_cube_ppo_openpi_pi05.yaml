@@ -129,7 +129,7 @@ actor:
     openpi:
       torch_compile: false
       task: rl
-      config_name: pi05_isaaclab_stack_cube
+      config_name: pi05_embodichain_stack_cube
       num_images_in_input: 2
       noise_level: 0.5
       joint_logprob: false
@@ -140,7 +140,7 @@ actor:
       action_horizon: 10
       action_chunk: 5
       noise_method: flow_sde
-      discrete_state_input: false
+      discrete_state_input: true
       eval_sft_image_crop: true
     openpi_data:
       norm_stats_path: ${oc.env:STACK_CUBE_NORM_STATS}

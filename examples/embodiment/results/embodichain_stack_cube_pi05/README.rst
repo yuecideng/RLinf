@@ -88,5 +88,48 @@ cleanup when its logical creator dies.
 checkpoint/evidence paths. ``ods_recipe_p2.json`` is the measured provisional
 recipe; ``ods_train_norm_stats.json`` and ``ods_norm_provenance.json`` identify
 the fixed bootstrap statistics. ``ods_sft_calibration.png`` shows native-statistics
-throughput and short-run losses. The checkpoint and evaluation videos remain
-under the local evidence directory recorded in the JSON.
+throughput and short-run losses. Local evidence paths are recorded in the JSON;
+historical trained checkpoint caches were subsequently removed at the user's
+request while reports and data were retained.
+
+
+State Input Validation (2026-11-07)
+----------------------------------
+
+The native recipe now uses all eight normalized robot-state values in the
+PI0.5 prompt during SFT, evaluation and PPO. ``state_input_pilot.json`` records
+a paired 200-update check using identical fresh ODS batches and restored
+optimizer/RNG state. The vision control scored 0/27; the state arm scored 1/27.
+Decoded action errors use 128 shared training contexts. This single-seed pilot
+does not establish convergence or an online/offline throughput comparison.
+
+.. image:: state_input_pilot.png
+   :alt: Paired vision and robot-state training losses and validation results
+
+``native_sft_progress.json`` records the subsequent experiment from PI0.5 base
+weights with a fresh optimizer and state enabled in both arms. The offline arm
+used 120 qualified native demonstrations (45,168 valid Task Program frames),
+with fixed training-only normalization shared by the online arm.
+The local experiment harness preserves offline padding masks and uses FP32
+master optimizer state; these overrides are recorded separately from the public
+recipe.
+
+.. list-table:: Native Offline Validation
+   :header-rows: 1
+
+   * - Optimizer updates
+     - Final stable success
+   * - 0
+     - 0/27
+   * - 2,500
+     - 12/27 (44.44%)
+   * - 5,000
+     - 17/27 (62.96%)
+
+Collection/export took 2,304.04 seconds; offline training took 16,012.10 seconds
+on GPUs 4/5. The ODS arm was paused at update 1,847 with a complete checkpoint,
+so its final success and wall-time comparison are unavailable. The requested
+budgets differ: offline fixes 120 demonstrations while ODS generates fresh
+demonstrations continuously. Both experiments use one seed and 27 frozen
+validation requests. Historical pilot checkpoints were removed during the
+user-requested cache cleanup; their audit identities remain in the records.

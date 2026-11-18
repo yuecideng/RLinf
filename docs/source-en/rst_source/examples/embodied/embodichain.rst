@@ -442,11 +442,35 @@ only valid Task Program frames supply supervision. Failed attempts are audited
 before a fresh request is tried. Train, validation and test requests stay separate.
 
 Each sample carries the current two-camera frame, 8D state and overall task
-instruction. Future observations, expert phases and provenance stay outside
+instruction. SFT, evaluation and PPO select ``pi05_embodichain_stack_cube`` with
+``discrete_state_input: true``. PI 0.5 tokenizes all eight normalized state values
+into the task prompt before padding the continuous state tensor to the model
+width. Future observations, expert phases and provenance stay outside
 model inputs. ODS padding becomes ``action_mask[B,H]``: invalid suffix tokens
 cannot attend or contribute flow-matching loss, and each sample is averaged over
 its valid elements before the batch mean. Missing masks retain offline SFT
 behavior.
+
+Read ``train/flow_mse_real_actions`` for the seven real action dimensions and
+``train/flow_mse_executed_chunk`` for the five executed controls. These metrics
+use each sample's valid controls and leave the original 32D flow objective
+unchanged. They measure normalized flow-velocity error; assess decoded command
+precision separately on a frozen projected ODS CPU batch:
+
+.. code-block:: bash
+
+   CUDA_VISIBLE_DEVICES=4 "$STACK_CUBE_MODEL_PYTHON" toolkits/ods/evaluate_stack_cube_actions.py \
+     --config /path/to/resolved_eval.yaml \
+     --batches /path/to/frozen_ods_batch.pt \
+     --output "$STACK_RUN/action_errors.json"
+
+Use ``torch.save`` to freeze the packet returned by ``project_openpi_batch``.
+It contains current ``front``/``wrist`` uint8 images, ``state[B,8]``, raw
+``actions[B,10,7]``, boolean ``action_mask[B,10]`` and ``prompts``. The tool
+reports C5 translation-target error in millimeters, composed rotation-target
+error in degrees, gripper accuracy and raw per-dimension MSE. These compare
+commands at expert states; evaluate achieved behavior through the closed-loop
+entry below.
 
 Checkpoints contain ``ods_source.json`` with schema, encoder and normalization
 fingerprints plus supply audit metadata. Use a fresh
@@ -458,6 +482,11 @@ with fresh cache and quotas. Previously delivered chunks are not refunded, and
 batch order is not exactly replayed. Evaluate the exported weights through the
 existing Ray evaluation entry with the same frozen validation manifest used for
 the offline baseline.
+
+Keep the model/data recipe with the checkpoint. Changing from a vision-only
+recipe to the native state-conditioned recipe changes the encoder contract;
+start a new experiment from declared initial weights. Resume an ODS checkpoint
+with its saved input contract.
 
 .. code-block:: bash
 
@@ -478,13 +507,54 @@ admission. All candidates used the same fixed native train-only statistics,
 starting checkpoint, cameras and batch 32. The selected provisional SDK recipe
 has 10 cache episodes and 87 chunk selections per episode, with a hard limit 128.
 
-A short GPU 0 / GPU 4–5 check restored SFT 15000→15002 and resumed for one further
+A short vision-only GPU 0 / GPU 4–5 check restored SFT 15000→15002 and resumed for one further
 update. Losses were 0.2456, 0.2856 and 0.3176; all 665 active Adam states reached
 15002 before resume. Independent Ray validation on the frozen 27 requests scored
 **0/27** final stable success. This validates streaming, masking and recovery;
 full-length native SFT and scientific reuse-profile qualification remain open.
 See the current JSON, curve and provenance in
 ``examples/embodiment/results/embodichain_stack_cube_pi05/``.
+
+A paired 200-update pilot compared the state-conditioned recipe with a
+vision-only control on GPUs 4–5. Both restored the complete offline step-15000
+training state, used batch 32 and consumed the same 6,400 fresh ODS chunks.
+The state arm generated data on GPU 0 with two producer environments; the control
+replayed those exact CPU batches. Batch hashes and final per-rank RNG states
+matched. On 27 frozen requests, both arms scored 0/27 at the start and after
+100 updates; the final results were:
+
+.. list-table:: Paired 200-Update Pilot
+   :header-rows: 1
+   :widths: 35 25 40
+
+   * - Policy Inputs
+     - Final Stable Success
+     - C5 Translation Target Mean / P95
+   * - Two cameras
+     - 0/27 (0%)
+     - 12.64 / 37.41 mm
+   * - Two cameras and 8D state
+     - 1/27 (3.70%)
+     - 13.58 / 36.36 mm
+
+Command errors use 128 identical training contexts and fixed sampling noise;
+they are separate from closed-loop validation. Changing each of the eight state
+values changed the trained model's output, and SFT/evaluation prompt tokens
+matched. One successful validation episode in a single-seed pilot is limited
+evidence; broader training and validation remain necessary.
+
+The subsequent native-data experiment initialized from PI0.5 base weights and
+used actual 8D state in both arms. Its offline arm trained on 120 qualified
+demonstrations (45,168 frames): validation reached 12/27 at 2,500 updates and
+17/27 at 5,000, compared with 0/27 before training. Collection took 38m24s and
+training took 4h26m52s on GPUs 4–5. The online arm was paused with a complete
+step-1847 checkpoint; its final success and elapsed-time comparison are pending.
+This experiment used an offline padding-mask adapter and FP32 master optimizer
+state in its local harness; these overrides are separate from the public recipe.
+See ``state_input_pilot.json``, ``state_input_pilot.png`` and
+``native_sft_progress.json`` in the evidence directory for measured results,
+fingerprints and limits. Historical pilot checkpoint caches were later removed
+at the user's request; their recorded audit identities remain available.
 
 Run Formal PPO
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

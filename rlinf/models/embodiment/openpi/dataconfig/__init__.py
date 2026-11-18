@@ -530,6 +530,18 @@ _CONFIGS = [
         pytorch_weight_path="checkpoints/torch/pi0_base",
     ),
     TrainConfig(
+        name="pi05_embodichain_stack_cube",
+        model=pi0_config.Pi0Config(
+            pi05=True, action_horizon=10, discrete_state_input=True
+        ),
+        data=LeRobotIsaacLabStackCubeDataConfig(
+            repo_id="",
+            base_config=DataConfig(prompt_from_task=False),
+            assets=AssetsConfig(assets_dir="checkpoints/torch/pi05_base/assets"),
+        ),
+        pytorch_weight_path="checkpoints/torch/pi05_base",
+    ),
+    TrainConfig(
         name="pi05_isaaclab_stack_cube",
         model=pi0_config.Pi0Config(
             pi05=True, action_horizon=10, discrete_state_input=False

@@ -302,7 +302,7 @@ def model_probe(args) -> dict:
         "openpi_data": {"norm_stats_path": str(args.norm_stats)},
         "openpi": {
             "task": "eval",
-            "config_name": "pi05_isaaclab_stack_cube",
+            "config_name": "pi05_embodichain_stack_cube",
             "action_horizon": 10,
             "action_chunk": 5,
             "action_env_dim": 7,
@@ -312,7 +312,7 @@ def model_probe(args) -> dict:
             "max_token_len": 200,
             "num_images_in_input": 2,
             "num_steps": 5,
-            "discrete_state_input": False,
+            "discrete_state_input": True,
             "eval_sft_image_crop": True,
             "torch_compile": False,
         },
