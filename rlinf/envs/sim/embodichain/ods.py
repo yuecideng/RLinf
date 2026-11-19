@@ -68,6 +68,8 @@ def prepare_stack_cube_source(cfg: Any, output: Path) -> tuple[str, dict[str, An
     raw["id"] = f"RLinf-StackCube-ODS-{uuid.uuid4().hex[:10]}-v1"
     raw["num_envs"] = int(cfg.producer_envs)
     raw["max_episode_steps"] = 600
+    render_cfg = raw.get("render_cfg", {})
+    raw["renderer"] = raw.get("renderer", render_cfg.get("renderer", "hybrid"))
     raw.update(headless=True, device="cuda:0", gpu_id=0, seed=int(cfg.get("seed", 0)))
     raw["env"]["task_instruction"] = STACK_PROMPT
     reset = raw["env"]["events"]["requests"]
@@ -90,6 +92,7 @@ def prepare_stack_cube_source(cfg: Any, output: Path) -> tuple[str, dict[str, An
         "instruction": STACK_PROMPT,
         "observation": {
             "timing": "pre_action",
+            "rendering": {"renderer": raw["renderer"], "render_cfg": render_cfg},
             "state": "eef_xyz_euler_xyz_signed_fingers@1",
             "state_transform": raw["env"]["observations"]["eef_state"],
             "state_names": ["x", "y", "z", "rx", "ry", "rz", "finger1", "finger2"],

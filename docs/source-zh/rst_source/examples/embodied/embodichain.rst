@@ -379,7 +379,7 @@ Evaluator 保存逐集物理测量和视频。根据 validation 结果选定 che
 
 使用 ``torch.save`` 保存 ``project_openpi_batch`` 返回的 packet，其中包含当前帧 ``front``/``wrist`` uint8 图像、``state[B,8]``、原始 ``actions[B,10,7]``、布尔 ``action_mask[B,10]`` 和 ``prompts``。工具报告 C5 的平移目标误差（毫米）、旋转目标之间的相对角度误差（度）、夹爪准确率和各维原始 MSE。这些指标比较专家状态下的命令，实际任务表现通过下方闭环入口评估。
 
-Checkpoint 的 ``ods_source.json`` 保存 schema、encoder、normalization 指纹及供数审计。源 schema 包含已安装的 EmbodiChain 与 DexSim 版本，用于识别渲染契约变化。旧 ODS schema 需建立新的训练会话，不能恢复完整训练状态；模型权重可作为新实验的初始化，进入 PPO 前需重新验证。每个源会话使用新的 ``runner.logger.experiment_name``，保留前次审计文件；恢复时设置 ``runner.resume_dir``，并让 ``runner.max_steps`` 大于已保存的 global step。训练状态与 RNG 通过现有 checkpoint 后端恢复；生产者重建源会话、缓存和配额。已交付 chunks 不退款，也不精确重放 batch 顺序。导出的权重使用现有 Ray 评估入口和离线基线相同的冻结 validation manifest 独立评估。
+Checkpoint 的 ``ods_source.json`` 保存 schema、encoder、normalization 指纹及供数审计。源 schema 包含已安装的 EmbodiChain/DexSim 版本、renderer 及其配置，用于识别渲染契约变化。供数和评估都遵循 Gym 配置的优先级：顶层 ``renderer`` 优先于 ``render_cfg.renderer``。旧 ODS schema 需建立新的训练会话，不能恢复完整训练状态；模型权重可作为新实验的初始化，进入 PPO 前需重新验证。每个源会话使用新的 ``runner.logger.experiment_name``，保留前次审计文件；恢复时设置 ``runner.resume_dir``，并让 ``runner.max_steps`` 大于已保存的 global step。训练状态与 RNG 通过现有 checkpoint 后端恢复；生产者重建源会话、缓存和配额。已交付 chunks 不退款，也不精确重放 batch 顺序。导出的权重使用现有 Ray 评估入口和离线基线相同的冻结 validation manifest 独立评估。
 
 将模型与数据配方和 checkpoint 一起保留。从仅使用图像的配方切换到原生状态输入配方会改变 encoder 契约，应从明确的初始权重建立新实验；恢复 ODS checkpoint 时使用其保存的输入契约。
 

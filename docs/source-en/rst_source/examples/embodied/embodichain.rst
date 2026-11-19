@@ -493,7 +493,9 @@ entry below.
 
 Checkpoints contain ``ods_source.json`` with schema, encoder and normalization
 fingerprints plus supply audit metadata. The source schema includes installed
-EmbodiChain and DexSim versions to detect changed rendering contracts. Earlier
+EmbodiChain/DexSim versions, the renderer and its settings to detect changed
+rendering contracts. The Gym config's flat ``renderer`` selection takes
+precedence over ``render_cfg.renderer`` for both source and evaluation. Earlier
 ODS schemas require a new training session rather than full-state resume;
 model weights can initialize a new experiment, with requalification before PPO. Use a fresh
 ``runner.logger.experiment_name`` for each source session so previous audit files

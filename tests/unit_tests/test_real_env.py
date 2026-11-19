@@ -5114,6 +5114,47 @@ def test_embodichain_source_schema_tracks_rendering_runtime(tmp_path, monkeypatc
         assert metadata[0][key] == metadata[1][key]
 
 
+@pytest.mark.parametrize("selection", ["renderer", "render_cfg"])
+def test_embodichain_source_schema_tracks_render_configuration(tmp_path, selection):
+    pytest.importorskip("embodichain")
+    import yaml
+
+    from rlinf.envs.sim.embodichain.ods import prepare_stack_cube_source
+
+    source = _ROOT / _EMBODICHAIN_CONFIG_PREFIX / "tasks/manipulation/stack_cube"
+    raw = yaml.safe_load((source / "task.panda.formal_expert.yaml").read_text())
+    for name in ("scene", "embodiment"):
+        raw[name]["component"] = str((source / raw[name]["component"]).resolve())
+    for name, value in raw["task_program"].items():
+        raw["task_program"][name] = str((source / value).resolve())
+    asset, requests = tmp_path / "panda.urdf", tmp_path / "requests.json"
+    asset.write_text('<robot name="panda"/>')
+    requests.write_text('{"requests": []}')
+    metadata = []
+    for renderer in ("hybrid", "fast-rt"):
+        raw["render_cfg"] = {"dlss": {"frame_time_delta_ms": 50.0}}
+        if selection == "renderer":
+            raw["renderer"] = renderer
+        else:
+            raw["render_cfg"]["renderer"] = renderer
+        task = tmp_path / f"{renderer}.yaml"
+        task.write_text(yaml.safe_dump(raw))
+        cfg = OmegaConf.create(
+            {
+                "gym_config_path": str(task),
+                "panda_urdf": str(asset),
+                "request_manifest": str(requests),
+                "producer_envs": 1,
+            }
+        )
+        snapshot, contract = prepare_stack_cube_source(cfg, tmp_path / renderer)
+        assert yaml.safe_load(Path(snapshot).read_text())["renderer"] == renderer
+        assert contract["schema"]["observation"]["rendering"]["renderer"] == renderer
+        metadata.append(contract)
+    assert metadata[0]["schema_sha256"] != metadata[1]["schema_sha256"]
+    assert metadata[0]["scene_sha256"] == metadata[1]["scene_sha256"]
+
+
 def test_embodichain_constructor_preserves_authored_simulation_config(
     tmp_path, embodichain_sdk_boundary
 ):
