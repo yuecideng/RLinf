@@ -543,8 +543,10 @@ Resume the OpenPI Data Stream
 To continue from the next consumed batch after a restart, enable
 ``data.stateful_loader: true`` before starting the run. This loader saves
 sampler progress and prefetched worker state for map-style OpenPI datasets;
-RLDS is unsupported. It requires at least two actor ranks and at least one
-full batch per rank.
+RLDS is unsupported. The loader supports one or more actor ranks and requires
+at least one full batch per rank. Single-rank sampling uses torchdata's resumable RandomSampler and reshuffles
+each epoch; distributed sampling retains the upstream fixed epoch-zero order.
+The ordinary OpenPI loader is unchanged when this option is disabled.
 Keep rank assignments, batch size, ``data.num_workers``, ``actor.seed``,
 shuffle setting and dataset length unchanged when restoring. Preserve dataset
 contents, normalization and preprocessing separately; their identities are

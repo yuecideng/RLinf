@@ -137,12 +137,11 @@ class _WorkerRandomStateDataset(torch.utils.data.Dataset):
 class StatefulOpenPIDataLoader:
     """Infinite OpenPI batches with resumable worker and sampler state.
 
-    The opt-in path requires at least two ranks; the ordinary single-process
-    loader keeps its upstream RandomSampler behavior. Restore requires the same
-    rank topology, dataset length, batch size, worker count, and seed.
+    Single-rank sampling uses torchdata's resumable RandomSampler and reshuffles
+    each epoch. Distributed sampling retains upstream's fixed epoch-zero
+    permutation. Restore requires the same rank topology, dataset length,
+    batch size, worker count, and seed.
     Dataset contents and preprocessing must also be unchanged.
-    The sampler retains upstream's fixed epoch-zero permutation. This preserves
-    the existing training distribution rather than introducing epoch reshuffling.
     """
 
     def __init__(
@@ -160,8 +159,11 @@ class StatefulOpenPIDataLoader:
         from openpi.training.data_loader import _collate_fn, _worker_init_fn
         from torchdata.stateful_dataloader import StatefulDataLoader
 
-        if world_size < 2:
-            raise ValueError("Stateful OpenPI loader requires world size >= 2.")
+        if world_size < 1 or not 0 <= rank < world_size:
+            raise ValueError(
+                f"Expected positive world size and rank in [0, {world_size}); "
+                f"got world_size={world_size}, rank={rank}."
+            )
         self._config = data_config
         self._signature = {
             "world_size": world_size,
@@ -173,18 +175,23 @@ class StatefulOpenPIDataLoader:
             "shuffle": shuffle,
         }
         self._generator = torch.Generator().manual_seed(seed)
-        # Match upstream DistributedSampler's default seed and epoch handling.
-        sampler = torch.utils.data.DistributedSampler(
-            dataset,
-            num_replicas=world_size,
-            rank=rank,
-            shuffle=shuffle,
-            drop_last=True,
+        # Distributed sampling keeps the upstream seed and epoch handling.
+        sampler = (
+            torch.utils.data.DistributedSampler(
+                dataset,
+                num_replicas=world_size,
+                rank=rank,
+                shuffle=shuffle,
+                drop_last=True,
+            )
+            if world_size > 1
+            else None
         )
         self._data_loader = StatefulDataLoader(
             _WorkerRandomStateDataset(dataset),
             batch_size=batch_size,
             sampler=sampler,
+            shuffle=shuffle if world_size == 1 else False,
             num_workers=num_workers,
             multiprocessing_context="spawn" if num_workers else None,
             persistent_workers=num_workers > 0,

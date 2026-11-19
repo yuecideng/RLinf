@@ -443,7 +443,7 @@ OpenPI 训练与推理设置
 恢复 OpenPI 数据进度
 ---------------------
 
-若要在重启后从下一批已消费数据继续，首次启动时就启用 ``data.stateful_loader: true``。该 loader 为 map-style OpenPI 数据集保存 sampler 进度和 worker 已预取的数据状态，不支持 RLDS。它要求至少两个 actor rank，且每个 rank 至少包含一个完整 batch。恢复时保持 rank 分配、batch size、``data.num_workers``、``actor.seed``、shuffle 设置和数据集长度一致。数据内容、normalization 和预处理版本仍需单独保持一致，数据集长度不能证明这些内容相同。
+若要在重启后从下一批已消费数据继续，首次启动时就启用 ``data.stateful_loader: true``。该 loader 为 map-style OpenPI 数据集保存 sampler 进度和 worker 已预取的数据状态，不支持 RLDS。它支持单个或多个 actor rank，每个 rank 至少包含一个完整 batch。单 rank 使用 torchdata 的可恢复 RandomSampler，每个 epoch 重新打乱顺序；多 rank 保持上游固定的 epoch-zero 顺序。关闭此选项时，普通 OpenPI loader 保持原行为。恢复时保持 rank 分配、batch size、``data.num_workers``、``actor.seed``、shuffle 设置和数据集长度一致。数据内容、normalization 和预处理版本仍需单独保持一致，数据集长度不能证明这些内容相同。
 
 可恢复的 actor checkpoint 除模型和 optimizer 状态外，还包含 ``data.pt``、``rng.pt`` 和 ``openpi_loader_state.json``。Loader manifest 在数据和 RNG 保存完成后发布，恢复时校验文件 hash 和 loader 设置。将 ``runner.resume_dir`` 指向外层 ``global_step_N`` 目录。仅有推理权重导出不能恢复训练。导出频率和 CPU checkpoint 通信设置见 :doc:`检查点恢复 <../../guides/resume>`。
 

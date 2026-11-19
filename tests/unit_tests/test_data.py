@@ -4359,15 +4359,19 @@ def _take_openpi_batches(iterator, count):
 
 
 @pytest.mark.parametrize("workers", [0, 2])
-@pytest.mark.parametrize("consumed", [5, 6, 8])
-def test_openpi_stateful_resume_preserves_prefetch_and_epoch_tensors(workers, consumed):
+@pytest.mark.parametrize("world_size", [1, 2])
+@pytest.mark.parametrize("offset", [-1, 0, 2])
+def test_openpi_stateful_resume_preserves_prefetch_and_epoch_tensors(
+    workers, world_size, offset
+):
     """The next batches match across mid-epoch and exact-end checkpoints."""
-    original = _resume_openpi_loader(workers=workers)
+    original = _resume_openpi_loader(workers=workers, world_size=world_size)
     iterator = iter(original)
+    consumed = len(original) + offset
     _take_openpi_batches(iterator, consumed)
     snapshot = original.state_dict()
     expected = _take_openpi_batches(iterator, 14)
-    resumed = _resume_openpi_loader(workers=workers)
+    resumed = _resume_openpi_loader(workers=workers, world_size=world_size)
     resumed.load_state_dict(snapshot)
     actual = _take_openpi_batches(iter(resumed), 14)
     for expected_batch, actual_batch in zip(expected, actual, strict=True):
@@ -4375,31 +4379,52 @@ def test_openpi_stateful_resume_preserves_prefetch_and_epoch_tensors(workers, co
             torch.testing.assert_close(left, right, rtol=0, atol=0)
 
 
-def test_openpi_stateful_rank_partitions_preserve_upstream_order():
-    """Opt-in retains upstream seed-zero permutation on each rank and epoch."""
+@pytest.mark.parametrize("world_size", [1, 2])
+def test_openpi_stateful_rank_sampling_matches_backend_order(world_size):
+    """Sampling matches the resumable single-rank or distributed backend."""
     from rlinf.data.datasets.openpi.official_sft_data_loader import (
         get_official_openpi_sft_num_batches,
     )
 
     seen = []
-    for rank in (0, 1):
-        loader = _resume_openpi_loader(rank=rank)
-        assert get_official_openpi_sft_num_batches(loader) == 6
-        batches = _take_openpi_batches(iter(loader), 12)
+    for rank in range(world_size):
+        loader = _resume_openpi_loader(rank=rank, world_size=world_size)
+        assert get_official_openpi_sft_num_batches(loader) == 12 // world_size
+        batches = _take_openpi_batches(iter(loader), 2 * len(loader))
         indices = torch.cat([b[0][:, 0] for b in batches]).to(torch.int64).tolist()
-        expected = list(
-            torch.utils.data.DistributedSampler(
+        if world_size == 1:
+            from torchdata.stateful_dataloader import StatefulDataLoader
+
+            ordinary = StatefulDataLoader(
                 _OpenPIResumeRows(),
-                num_replicas=2,
-                rank=rank,
+                batch_size=2,
                 shuffle=True,
-                drop_last=True,
+                generator=torch.Generator().manual_seed(17),
             )
-        )
-        assert indices == expected + expected
+            expected = [
+                int(index)
+                for _ in range(2)
+                for batch in ordinary
+                for index in batch["state"][:, 0]
+            ]
+        else:
+            expected = (
+                list(
+                    torch.utils.data.DistributedSampler(
+                        _OpenPIResumeRows(),
+                        num_replicas=world_size,
+                        rank=rank,
+                        shuffle=True,
+                        drop_last=True,
+                    )
+                )
+                * 2
+            )
+        assert indices == expected
         seen.append(set(indices))
-    assert seen[0].isdisjoint(seen[1])
-    assert seen[0] | seen[1] == set(range(24))
+    if world_size == 2:
+        assert seen[0].isdisjoint(seen[1])
+    assert set.union(*seen) == set(range(24))
 
 
 @pytest.mark.parametrize(
@@ -4408,7 +4433,7 @@ def test_openpi_stateful_rank_partitions_preserve_upstream_order():
 def test_openpi_stateful_restore_rejects_incompatible_layout(change):
     original = _resume_openpi_loader()
     next(iter(original))
-    with pytest.raises(ValueError, match="unchanged rank topology|world size >= 2"):
+    with pytest.raises(ValueError, match="unchanged rank topology"):
         _resume_openpi_loader(**change).load_state_dict(original.state_dict())
 
 
