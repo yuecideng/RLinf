@@ -56,7 +56,10 @@ class FSDPSftWorker(FSDPModelManager, Worker):
         )
 
         # if train_data_paths is not set, the code will just eval the model
-        if self.cfg.data.get("train_data_paths") is None:
+        if (
+            self.cfg.data.get("train_data_paths") is None
+            and self.cfg.data.get("train_data_source", "lerobot") != "ods"
+        ):
             logging.warning("train_data_paths is not set, will just eval the model")
             assert self.cfg.data.get("val_data_paths") is not None, (
                 "train_data_paths is not set, val_data_paths must be set"
@@ -65,7 +68,7 @@ class FSDPSftWorker(FSDPModelManager, Worker):
             self.data_iter = None
         else:
             self.data_loader, self.data_config = self.build_dataloader(
-                self.cfg.data.train_data_paths, eval_dataset=False
+                self.cfg.data.get("train_data_paths"), eval_dataset=False
             )
             self.data_iter = iter(self.data_loader)
 
@@ -101,6 +104,14 @@ class FSDPSftWorker(FSDPModelManager, Worker):
         steps_per_epoch = self.get_max_steps_per_epoch()
         max_epochs = self.cfg.runner.get("max_epochs", -1)
         max_steps = self.cfg.runner.get("max_steps", -1)
+
+        if steps_per_epoch is None:
+            if max_steps <= 0 or max_epochs > 0:
+                raise ValueError(
+                    "Streaming SFT requires positive max_steps and no epoch limit."
+                )
+            optim_cfg.total_training_steps = max_steps
+            return
 
         step_limits = []
         if max_epochs > 0:

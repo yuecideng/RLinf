@@ -1,0 +1,311 @@
+{
+  "checked_at": "2026-11-19T20:26:56.076298+08:00",
+  "status": "runtime_pipeline_passed_policy_requalification_required",
+  "sdk_main_revision": "fb96705b0869d3c4ef85cb5bdd56784e54debedf",
+  "integration_revision": "b715f35d2ce5e820028006457d4e6a86fc45c86a",
+  "latest_revision_validation": "The one intervening commit adds other RL tasks and optional simulation helpers. Dependency constraints, Stack Cube control/recording and renderer implementations are unchanged. Rechecked 53 environment tests and the full 27-row reset on the final main pin.",
+  "sdk_versions": {
+    "embodichain": "0.3.2",
+    "dexsim-engine": "0.6.0",
+    "torch": "2.7.1+cu128",
+    "numpy": "2.2.6",
+    "lerobot": "0.4.4",
+    "tensordict": "0.14.3"
+  },
+  "source_schema_version": "rlinf-stack-cube-ods-v2",
+  "source_runtime": {
+    "embodichain": "0.3.2",
+    "dexsim-engine": "0.6.0"
+  },
+  "tests": {
+    "models": 19,
+    "data_model_interpreter": 40,
+    "sdk_projection": 1,
+    "environment_including_runtime_fingerprint": 53,
+    "total_passed": 113,
+    "model_interpreter_skip_retested_in_sdk": 1,
+    "cli_guards_passed": 2
+  },
+  "installations": {
+    "explicit_torch_model_sdk_pair": 0,
+    "default_torch_model_sdk_pair": 0,
+    "default_standalone_env": 0,
+    "pip_check": "model and SDK interpreters passed"
+  },
+  "gpu_placement": {
+    "simulation": 0,
+    "sft": [
+      4,
+      5
+    ],
+    "evaluation_policy": 4
+  },
+  "cart_pole_smoke": {
+    "kind": "cart_pole",
+    "status": "passed",
+    "num_envs": 2,
+    "steps": 8,
+    "state_shape": [
+      2,
+      6
+    ],
+    "images": {},
+    "action_dim": 2,
+    "versions": {
+      "embodichain": "0.3.2",
+      "dexsim-engine": "0.6.0",
+      "torch": "2.7.1+cu128",
+      "numpy": "2.2.6",
+      "tensordict": "0.14.3"
+    }
+  },
+  "stack_cube_smoke": {
+    "kind": "stack_cube",
+    "status": "passed",
+    "num_envs": 2,
+    "steps": 8,
+    "state_shape": [
+      2,
+      8
+    ],
+    "images": {
+      "main_images": {
+        "shape": [
+          2,
+          256,
+          256,
+          3
+        ],
+        "dtype": "torch.uint8",
+        "min": 9,
+        "max": 233
+      },
+      "wrist_images": {
+        "shape": [
+          2,
+          256,
+          256,
+          3
+        ],
+        "dtype": "torch.uint8",
+        "min": 20,
+        "max": 224
+      }
+    },
+    "action_dim": 7,
+    "versions": {
+      "embodichain": "0.3.2",
+      "dexsim-engine": "0.6.0",
+      "torch": "2.7.1+cu128",
+      "numpy": "2.2.6",
+      "tensordict": "0.14.3"
+    }
+  },
+  "source_admission": {
+    "producer_envs": 1,
+    "qualified": 8,
+    "attempts": 9,
+    "rejected": 1,
+    "qualified_physical_steps": [
+      348,
+      385,
+      399,
+      397,
+      357,
+      362,
+      343,
+      417
+    ],
+    "capacity_steps": 600,
+    "admission_steps": 450,
+    "stable_tail_controls": 20,
+    "max_generation_attempts_per_fill": 3
+  },
+  "ods_gpu_suite": {
+    "ci-test": {
+      "world_size": 2,
+      "delivered_chunks": 4,
+      "committed_chunks": 4,
+      "producer_alive_after_stop": false,
+      "error": null
+    },
+    "resume": {
+      "world_size": 2,
+      "delivered_chunks": 2,
+      "committed_chunks": 2,
+      "producer_alive_after_stop": false,
+      "error": null
+    },
+    "single_rank": {
+      "world_size": 1,
+      "delivered_chunks": 2,
+      "committed_chunks": 2,
+      "producer_alive_after_stop": false,
+      "error": null
+    },
+    "slow_consumer": {
+      "world_size": 1,
+      "delivered_chunks": 2,
+      "committed_chunks": 0,
+      "producer_alive_after_stop": false,
+      "error": null
+    },
+    "source_failure": {
+      "world_size": 2,
+      "delivered_chunks": 2,
+      "committed_chunks": 2,
+      "producer_alive_after_stop": false,
+      "error": "RuntimeError: ODS training request manifest is exhausted."
+    }
+  },
+  "v2_gpu_resume": {
+    "fresh": {
+      "delivered_chunks": 2,
+      "committed_chunks": 2,
+      "producer_alive_after_stop": false,
+      "error": null
+    },
+    "resume": {
+      "delivered_chunks": 2,
+      "committed_chunks": 2,
+      "producer_alive_after_stop": false,
+      "error": null
+    },
+    "reject_legacy": {
+      "delivered_chunks": 0,
+      "committed_chunks": 0,
+      "producer_alive_after_stop": false,
+      "error": null
+    }
+  },
+  "closed_loop_existing_offline5000": {
+    "new_runtime_successes": 1,
+    "episodes": 27,
+    "success_percent": 3.7037037037037037,
+    "archived_old_runtime_successes": 17,
+    "steps_per_episode": 450,
+    "weights_retrained": false,
+    "process": {
+      "pid": 2442972,
+      "args": [
+        "/workspace/test-venvs/rlinf-embodichain060/bin/python",
+        "-u",
+        "/workspace/exp_data/rlinf_embodichain_dexsim060_compat_20261119/evaluate_compat.py"
+      ],
+      "ray_temp": "/tmp/r6e-d6jog12y",
+      "started_unix": 1795089372.3398669,
+      "returncode": 0,
+      "wall_seconds": 223.73014497756958
+    }
+  },
+  "fixed_reset_comparison_old_new": {
+    "states": {
+      "equal": true,
+      "max_abs": 0.0,
+      "mean_abs": 0.0,
+      "old_mean": -0.2506832778453827,
+      "new_mean": -0.2506832778453827
+    },
+    "qpos": {
+      "equal": true,
+      "max_abs": 0.0,
+      "mean_abs": 0.0,
+      "old_mean": 0.040042098611593246,
+      "new_mean": 0.040042098611593246
+    },
+    "qvel": {
+      "equal": true,
+      "max_abs": 0.0,
+      "mean_abs": 0.0,
+      "old_mean": 0.0,
+      "new_mean": 0.0
+    },
+    "cube_poses": {
+      "equal": true,
+      "max_abs": 0.0,
+      "mean_abs": 0.0,
+      "old_mean": 0.2597551643848419,
+      "new_mean": 0.2597551643848419
+    },
+    "hand_poses": {
+      "equal": true,
+      "max_abs": 0.0,
+      "mean_abs": 0.0,
+      "old_mean": 0.05514581874012947,
+      "new_mean": 0.05514581874012947
+    },
+    "main_images": {
+      "equal": false,
+      "max_abs": 222.0,
+      "mean_abs": 30.289644241333008,
+      "old_mean": 74.3227767944336,
+      "new_mean": 104.50419616699219
+    },
+    "wrist_images": {
+      "equal": false,
+      "max_abs": 214.0,
+      "mean_abs": 19.766605377197266,
+      "old_mean": 29.46371078491211,
+      "new_mean": 48.98717498779297
+    }
+  },
+  "model_frozen_input_probe": {
+    "contexts": 2,
+    "identical_noise": true,
+    "decoded_actions_bitwise_equal": true,
+    "max_abs_difference": 0.0
+  },
+  "latest_main_reset_parity": {
+    "states": {
+      "equal": true,
+      "max_abs": 0.0,
+      "mean_abs": 0.0
+    },
+    "qpos": {
+      "equal": true,
+      "max_abs": 0.0,
+      "mean_abs": 0.0
+    },
+    "qvel": {
+      "equal": true,
+      "max_abs": 0.0,
+      "mean_abs": 0.0
+    },
+    "cube_poses": {
+      "equal": true,
+      "max_abs": 0.0,
+      "mean_abs": 0.0
+    },
+    "hand_poses": {
+      "equal": true,
+      "max_abs": 0.0,
+      "mean_abs": 0.0
+    },
+    "main_images": {
+      "equal": true,
+      "max_abs": 0.0,
+      "mean_abs": 0.0
+    },
+    "wrist_images": {
+      "equal": true,
+      "max_abs": 0.0,
+      "mean_abs": 0.0
+    }
+  },
+  "evidence_root": "/workspace/exp_data/rlinf_embodichain_dexsim060_compat_20261119",
+  "limitations": [
+    "The 17/27 figure is the archived old-runtime result; the 1/27 result is a new same-checkpoint evaluation, not a retraining study.",
+    "RGB differences are measured at identical resets; dynamic physics differences are not excluded by this check.",
+    "Old ODS v1 schemas are deliberately rejected before optimizer updates; declared weight initialization in a new experiment remains possible.",
+    "Full-length training, PPO optimizer e2e, new throughput calibration, Docker builds and remote GPU CI were not rerun."
+  ],
+  "cleanup": {
+    "temporary_venvs_removed": 5,
+    "smoke_checkpoint_file_bytes_removed": 55581623944,
+    "existing_experiment_data_preserved": true,
+    "production_process_audit": {
+      "verified_producer_identities": 10,
+      "remaining_live_producers": []
+    }
+  }
+}

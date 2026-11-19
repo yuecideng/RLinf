@@ -1262,3 +1262,52 @@ def test_process_that_built_a_cluster_keeps_its_exit_code():
     )
 
     assert result.returncode == 3, result.stderr
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"data.train_data_paths": "offline-data"},
+        {"data.num_workers": 1},
+        {"data.stateful_loader": True},
+        {"runner.max_steps": 0},
+        {"runner.max_epochs": 1},
+        {"actor.model.model_type": "openvla_oft"},
+        {"runner.val_check_interval": 1},
+    ],
+)
+def test_ods_sft_rejects_incompatible_loader_and_budget(override):
+    from rlinf.config import validate_sft_cfg
+
+    cfg = _ods_sft_config()
+    for path, value in override.items():
+        OmegaConf.update(cfg, path, value)
+    with pytest.raises(ValueError):
+        validate_sft_cfg(cfg)
+
+
+def _ods_sft_config():
+    return OmegaConf.create(
+        {
+            "actor": {
+                "global_batch_size": 32,
+                "micro_batch_size": 1,
+                "model": {"model_type": "openpi"},
+            },
+            "runner": {"max_steps": 2, "max_epochs": -1, "val_check_interval": -1},
+            "data": {
+                "train_data_source": "ods",
+                "train_data_paths": None,
+                "num_workers": 0,
+                "stateful_loader": False,
+            },
+        }
+    )
+
+
+def test_ods_sft_accepts_explicit_step_budget_without_dataset_paths():
+    from rlinf.config import validate_sft_cfg
+
+    cfg = validate_sft_cfg(_ods_sft_config())
+    assert cfg.data.train_data_paths is None
+    assert cfg.runner.max_steps == 2

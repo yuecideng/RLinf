@@ -1,0 +1,46 @@
+{
+  "episodes": [
+    {
+      "request_id": "formal-train-40000",
+      "frames": 391,
+      "split": "train"
+    },
+    {
+      "request_id": "formal-train-40001",
+      "frames": 422,
+      "split": "train"
+    },
+    {
+      "request_id": "formal-train-40002",
+      "frames": 381,
+      "split": "train"
+    },
+    {
+      "request_id": "formal-train-40003",
+      "frames": 376,
+      "split": "train"
+    },
+    {
+      "request_id": "formal-train-40004",
+      "frames": 365,
+      "split": "train"
+    },
+    {
+      "request_id": "formal-train-40005",
+      "frames": 348,
+      "split": "train"
+    },
+    {
+      "request_id": "formal-train-40006",
+      "frames": 353,
+      "split": "train"
+    },
+    {
+      "request_id": "formal-train-40007",
+      "frames": 346,
+      "split": "train"
+    }
+  ],
+  "qualification": "provisional bootstrap, not accuracy-qualified",
+  "normalization": "fixed train-only; valid Task Program frames; settling excluded"
+}

@@ -419,6 +419,11 @@ class AsyncRayWork(AsyncWork):
         """Wait for the work to complete."""
         return ray.get(self._ray_object)
 
+    def done(self) -> bool:
+        """Return whether the Ray result is locally available without blocking."""
+        ready, _ = ray.wait([self._ray_object], timeout=0)
+        return bool(ready)
+
 
 class AsyncRouteWork(AsyncWork):
     """Aggregate multiple async channel operations into one routed result."""

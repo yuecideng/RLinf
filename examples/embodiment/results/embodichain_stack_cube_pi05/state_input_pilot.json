@@ -1,0 +1,526 @@
+{
+  "status": "completed",
+  "finished_at": "2026-11-07T00:30:16.952003+08:00",
+  "configuration": "PI0.5 Stack Cube H10/C5, RGBfront+wrist, native8D discrete state vs vision-only control",
+  "starting_step": 15000,
+  "target_step": 15200,
+  "optimizer_and_scheduler": "Restored identically from the complete original offline15000 checkpoint, with rank RNG restoration and fresh data sessions.",
+  "training_gpus": [
+    4,
+    5
+  ],
+  "live_simulation_gpu": 0,
+  "producer_envs": 2,
+  "data_control": "State arm uses live native SDK ODS; vision control replays the exact400 newly recorded rank-packets (200 global batches). No older dataset replaces the online source.",
+  "normalization_sha256": "8cd55a9435edcf855d17a0967a65426663dc510588812d422b6884fae093f2a4",
+  "validation_manifest_sha256": "42c31db9f43933f2fddf60e37b9a82a36c327521d4f90c6aecd3d690cc271d36",
+  "initial_state_preflight": {
+    "state_dimensions": 8,
+    "all_dimensions_change_prompt_tokens": true,
+    "train_eval_tokens_equal": true,
+    "actual_model_action_max_abs_change_by_state_dimension": [
+      0.02079164981842041,
+      0.04214757680892944,
+      0.07295900583267212,
+      0.06276428699493408,
+      0.018925905227661133,
+      0.2100987732410431,
+      0.015068352222442627,
+      0.014832735061645508
+    ],
+    "raw_state_delta_by_dimension": [
+      0.018750375136733055,
+      -0.019236380234360695,
+      0.02348926290869713,
+      -0.6281925439834595,
+      -0.011437371373176575,
+      -0.2540384531021118,
+      -0.0018066896591335535,
+      0.0016641209367662668
+    ],
+    "full_checkpoint": "/workspace/exp_data/rlinf_stack_cube_sft_gpu56_20261103_192328/training/checkpoints/global_step_15000/actor",
+    "initial_optimizer_state": "original offline15000; new ODS sessions",
+    "pass": true
+  },
+  "final_state_preflight": {
+    "state_dimensions": 8,
+    "all_dimensions_change_prompt_tokens": true,
+    "train_eval_tokens_equal": true,
+    "actual_model_action_max_abs_change_by_state_dimension": [
+      0.005156241357326508,
+      0.010037556290626526,
+      0.012623868882656097,
+      0.011090599000453949,
+      0.05689762532711029,
+      0.016750454902648926,
+      0.03768479824066162,
+      0.007998824119567871
+    ],
+    "raw_state_delta_by_dimension": [
+      0.018750375136733055,
+      -0.019236380234360695,
+      0.02348926290869713,
+      -0.6281925439834595,
+      -0.011437371373176575,
+      -0.2540384531021118,
+      -0.0018066896591335535,
+      0.0016641209367662668
+    ],
+    "full_checkpoint": "/workspace/exp_data/rlinf_ods_state_ab_gpu45_20261106_225501/state/run/checkpoints/global_step_15200/actor",
+    "initial_optimizer_state": "original offline15000; new ODS sessions",
+    "pass": true
+  },
+  "checkpoint_audit": {
+    "final_rank_RNG_states_equal": true,
+    "checkpoints": [
+      {
+        "arm": "state",
+        "step": 15100,
+        "path": "/workspace/exp_data/rlinf_ods_state_ab_gpu45_20261106_225501/state/run/checkpoints/global_step_15100/actor",
+        "metadata": {
+          "step": 15100,
+          "save_training_state": true,
+          "checkpoint_format": "dcp",
+          "complete": true
+        },
+        "optimizer_step_counts": {
+          "15100.0": 665,
+          "0.0": 2
+        },
+        "encoder_sha256": "7e09424d056f4d749941d91fbb54048c4cfe72d6f5d6fccf98396be69559128d",
+        "schema_sha256": "eda5016bd4e0c64e7a5b725a3fe5e5c16d982b6cdd62a82cfa60ce68741882e4",
+        "normalization_sha256": "8cd55a9435edcf855d17a0967a65426663dc510588812d422b6884fae093f2a4",
+        "training_state_complete": true
+      },
+      {
+        "arm": "state",
+        "step": 15200,
+        "path": "/workspace/exp_data/rlinf_ods_state_ab_gpu45_20261106_225501/state/run/checkpoints/global_step_15200/actor",
+        "metadata": {
+          "step": 15200,
+          "save_training_state": true,
+          "checkpoint_format": "dcp",
+          "complete": true
+        },
+        "optimizer_step_counts": {
+          "15200.0": 665,
+          "0.0": 2
+        },
+        "encoder_sha256": "7e09424d056f4d749941d91fbb54048c4cfe72d6f5d6fccf98396be69559128d",
+        "schema_sha256": "eda5016bd4e0c64e7a5b725a3fe5e5c16d982b6cdd62a82cfa60ce68741882e4",
+        "normalization_sha256": "8cd55a9435edcf855d17a0967a65426663dc510588812d422b6884fae093f2a4",
+        "training_state_complete": true
+      },
+      {
+        "arm": "vision",
+        "step": 15100,
+        "path": "/workspace/exp_data/rlinf_ods_state_ab_gpu45_20261106_225501/vision/run/checkpoints/global_step_15100/actor",
+        "metadata": {
+          "step": 15100,
+          "save_training_state": true,
+          "checkpoint_format": "dcp",
+          "complete": true
+        },
+        "optimizer_step_counts": {
+          "15100.0": 665,
+          "0.0": 2
+        },
+        "encoder_sha256": "db77ac77b8ebc6c6db84da6a608e697d9acdf19a6a172c3335e07d30bcb2fd77",
+        "schema_sha256": "eda5016bd4e0c64e7a5b725a3fe5e5c16d982b6cdd62a82cfa60ce68741882e4",
+        "normalization_sha256": "8cd55a9435edcf855d17a0967a65426663dc510588812d422b6884fae093f2a4",
+        "training_state_complete": true
+      },
+      {
+        "arm": "vision",
+        "step": 15200,
+        "path": "/workspace/exp_data/rlinf_ods_state_ab_gpu45_20261106_225501/vision/run/checkpoints/global_step_15200/actor",
+        "metadata": {
+          "step": 15200,
+          "save_training_state": true,
+          "checkpoint_format": "dcp",
+          "complete": true
+        },
+        "optimizer_step_counts": {
+          "15200.0": 665,
+          "0.0": 2
+        },
+        "encoder_sha256": "db77ac77b8ebc6c6db84da6a608e697d9acdf19a6a172c3335e07d30bcb2fd77",
+        "schema_sha256": "eda5016bd4e0c64e7a5b725a3fe5e5c16d982b6cdd62a82cfa60ce68741882e4",
+        "normalization_sha256": "8cd55a9435edcf855d17a0967a65426663dc510588812d422b6884fae093f2a4",
+        "training_state_complete": true
+      }
+    ],
+    "paired_tape_records": 400,
+    "paired_global_batches": 200,
+    "chunks_per_arm": 6400,
+    "all_recorded_file_hashes_verified": true,
+    "note": "Only the state arm generates online data; the vision control replays identical newly generated tensors. Replay does not charge the SDK source twice."
+  },
+  "limitations": [
+    "Single training seed and27 validation requests; this is a200-update pilot, not a convergence or statistical significance claim.",
+    "Decoded errors cover128 fixed expert contexts drawn from the identical delivered training batches; they are training-context diagnostics, not held-out action accuracy.",
+    "Throughput between the arms is not an online-vs-offline performance comparison: the control intentionally replays batches to isolate input conditioning.",
+    "The inherited32D flow objective, optimizer precision, learning-rate schedule and H10/C5 contract were held fixed.",
+    "An initial10-update start missed new metric forwarding, was closed and archived, and its weights and batches were excluded from the paired experiment."
+  ],
+  "video_archiving": {
+    "issue": "Resolved evaluation template retained the preceding run video directory; repeated seed_0/0.mp4 overwritten, including preceding run recording. Scalar metrics and all checkpoints unchanged.",
+    "retained_video_checkpoint": "state15200",
+    "retained_video": "/workspace/exp_data/rlinf_ods_state_ab_gpu45_20261106_225501/evaluation/state_15200/video/eval/seed_0/0.mp4",
+    "retained_video_sha256": "93d3877c9bacfb909064ecf37b6e0398bca670f4e2263c0046c30c3d81fb04b3",
+    "unavailable_videos": [
+      "previous_run_step15202_original",
+      "vision15000",
+      "vision15100",
+      "vision15200",
+      "state15000",
+      "state15100"
+    ],
+    "corrective_action": "Moved final current recording into current experiment and corrected all future evaluation directories. Actual used configs retained in evaluation_configs_used.",
+    "old_video_path": "/workspace/exp_data/rlinf_ods_sft_small_gpu45_20261106_204000/evaluation/step_15202/video/eval/seed_0/0.mp4"
+  },
+  "checks": {
+    "unit_model_cpu": {
+      "passed": 19,
+      "selected": "openpi_sft or stack_cube_action_metrics or stack_cube_rotation_metric"
+    },
+    "unit_data_modelenv_cpu": {
+      "passed": 44,
+      "skipped": 1,
+      "skipped_case": "test_ods_sdk_projection_keeps_only_current_observations_and_future_action_mask",
+      "skip_reason": "TensorDict absent in model interpreter; retried in SDK interpreter"
+    },
+    "docs_build_en_warnings": 0,
+    "docs_build_zh_warnings": 0,
+    "doc_markup": "passed",
+    "doc_symbols_changed_pages": "passed with two explicit SHA identifiers allowed",
+    "ruff": "passed",
+    "git_diff_check": "passed",
+    "gpu_preflight": "all8 state dimensions change actual model actions; SFT/eval tokens identical",
+    "SDK_projection_test_cpu": {
+      "passed": 1,
+      "interpreter": "SDK NumPy2"
+    },
+    "runtime_metric_forwarding_verified": true,
+    "public_default_config_composition": "SFT/ODS/eval/PPO native state conditioning matches"
+  },
+  "source_report": {
+    "path": "/workspace/exp_data/rlinf_ods_state_ab_gpu45_20261106_225501/report.json",
+    "sha256": "a044432ff6c33bbc01b4f856201607c035eb5de49ee9e0295132c492ed9a4ff2"
+  },
+  "checkpoint_retention": "Historical trained checkpoint caches were subsequently removed at the user request; these are recorded audit identities, not download paths.",
+  "arms": {
+    "vision": {
+      "new_optimizer_updates": 200,
+      "global_batch_size": 32,
+      "chunks": 6400,
+      "process_seconds": 1147.6658482425846,
+      "live_ODS": false,
+      "loss": {
+        "first20_mean": 0.17746076881885528,
+        "last20_mean": 0.026579468604177238,
+        "last": 0.02657553181052208
+      },
+      "real7_flow": {
+        "first20_mean": 0.8061941102147102,
+        "last20_mean": 0.1209805965423584,
+        "last": 0.12113228440284729
+      },
+      "C5_flow": {
+        "first20_mean": 0.8372238963842392,
+        "last20_mean": 0.11757784523069859,
+        "last": 0.12364724278450012
+      },
+      "evaluations": [
+        {
+          "arm": "vision",
+          "step": 15000,
+          "new_updates": 0,
+          "successes": 0,
+          "episodes": 27,
+          "metrics": {
+            "eval/success_at_end": 0.0,
+            "eval/reward": 0.0,
+            "eval/success_once": 0.0,
+            "eval/baseline_success_at_end": 0.0,
+            "eval/fail_once": 0.0,
+            "eval/episode_len": 450.0,
+            "eval/return": 0.0,
+            "eval/num_trajectories": 27.0
+          },
+          "action_errors": {
+            "valid_controls": 637,
+            "translation_target_error_mm_mean": 19.37244604734702,
+            "translation_target_error_mm_p95": 36.94083479111304,
+            "rotation_target_error_deg_mean": 5.677644901164842,
+            "rotation_target_error_deg_p95": 13.670468176651703,
+            "binary_gripper_accuracy": 0.9748822605965463,
+            "raw_action_mse_per_dim": [
+              0.0005208450101077905,
+              0.0002409824018881546,
+              0.001147229407729421,
+              0.0015613314252466988,
+              0.0004213094978968015,
+              0.05462353355202667,
+              0.10047095761381476
+            ],
+            "raw_action_mse_real7": 0.02271231270124433,
+            "checkpoint": "/workspace/exp_data/rlinf_stack_cube_sft_gpu56_20261103_192328/training/checkpoints/global_step_15000/actor",
+            "config_name": "pi05_isaaclab_stack_cube",
+            "samples": 128,
+            "executed_chunk": 5,
+            "seed": 0,
+            "batch_size": 4,
+            "normalization_sha256": "8cd55a9435edcf855d17a0967a65426663dc510588812d422b6884fae093f2a4",
+            "batches_sha256": "4b87556bde95057080c0e147444a91b2adfb36e2e714fc17a47a695730327e58",
+            "metric_scope": "Decoded commands on fixed expert states; independent closed-loop evaluation is required."
+          }
+        },
+        {
+          "arm": "vision",
+          "step": 15100,
+          "new_updates": 100,
+          "successes": 0,
+          "episodes": 27,
+          "metrics": {
+            "eval/fail_once": 0.0,
+            "eval/reward": 0.0,
+            "eval/episode_len": 450.0,
+            "eval/baseline_success_at_end": 0.0,
+            "eval/success_at_end": 0.0,
+            "eval/return": 0.0,
+            "eval/success_once": 0.0,
+            "eval/num_trajectories": 27.0
+          },
+          "action_errors": {
+            "valid_controls": 637,
+            "translation_target_error_mm_mean": 15.765351443121155,
+            "translation_target_error_mm_p95": 40.40252491332882,
+            "rotation_target_error_deg_mean": 3.0609200895376123,
+            "rotation_target_error_deg_p95": 11.221362364941326,
+            "binary_gripper_accuracy": 0.9748822605965463,
+            "raw_action_mse_per_dim": [
+              0.00020763564096834615,
+              0.00028158626819925264,
+              0.0010441847217668838,
+              0.00024016535348216444,
+              8.279484367012995e-05,
+              0.02781550865828764,
+              0.10047095761381476
+            ],
+            "raw_action_mse_real7": 0.018591833300027026,
+            "checkpoint": "/workspace/exp_data/rlinf_ods_state_ab_gpu45_20261106_225501/vision/run/checkpoints/global_step_15100/actor",
+            "config_name": "pi05_isaaclab_stack_cube",
+            "samples": 128,
+            "executed_chunk": 5,
+            "seed": 0,
+            "batch_size": 4,
+            "normalization_sha256": "8cd55a9435edcf855d17a0967a65426663dc510588812d422b6884fae093f2a4",
+            "batches_sha256": "4b87556bde95057080c0e147444a91b2adfb36e2e714fc17a47a695730327e58",
+            "metric_scope": "Decoded commands on fixed expert states; independent closed-loop evaluation is required."
+          }
+        },
+        {
+          "arm": "vision",
+          "step": 15200,
+          "new_updates": 200,
+          "successes": 0,
+          "episodes": 27,
+          "metrics": {
+            "eval/success_once": 0.0,
+            "eval/reward": 0.0,
+            "eval/success_at_end": 0.0,
+            "eval/baseline_success_at_end": 0.0,
+            "eval/return": 0.0,
+            "eval/fail_once": 0.0,
+            "eval/episode_len": 450.0,
+            "eval/num_trajectories": 27.0
+          },
+          "action_errors": {
+            "valid_controls": 637,
+            "translation_target_error_mm_mean": 12.64466941679049,
+            "translation_target_error_mm_p95": 37.414570359531375,
+            "rotation_target_error_deg_mean": 2.5673096237679593,
+            "rotation_target_error_deg_p95": 10.506935174931007,
+            "binary_gripper_accuracy": 0.9795918367346939,
+            "raw_action_mse_per_dim": [
+              0.00012470082855589853,
+              0.00017698120700737274,
+              0.00079723821929403,
+              0.00015773445360753752,
+              8.99136400947593e-05,
+              0.022569563928028055,
+              0.08163265306122448
+            ],
+            "raw_action_mse_real7": 0.015078397905401733,
+            "checkpoint": "/workspace/exp_data/rlinf_ods_state_ab_gpu45_20261106_225501/vision/run/checkpoints/global_step_15200/actor",
+            "config_name": "pi05_isaaclab_stack_cube",
+            "samples": 128,
+            "executed_chunk": 5,
+            "seed": 0,
+            "batch_size": 4,
+            "normalization_sha256": "8cd55a9435edcf855d17a0967a65426663dc510588812d422b6884fae093f2a4",
+            "batches_sha256": "4b87556bde95057080c0e147444a91b2adfb36e2e714fc17a47a695730327e58",
+            "metric_scope": "Decoded commands on fixed expert states; independent closed-loop evaluation is required."
+          }
+        }
+      ]
+    },
+    "state": {
+      "new_optimizer_updates": 200,
+      "global_batch_size": 32,
+      "chunks": 6400,
+      "process_seconds": 1598.3813794362359,
+      "live_ODS": true,
+      "loss": {
+        "first20_mean": 0.11180617026984692,
+        "last20_mean": 0.026259163115173578,
+        "last": 0.030441250652074814
+      },
+      "real7_flow": {
+        "first20_mean": 0.503362350165844,
+        "last20_mean": 0.11942975632846356,
+        "last": 0.13872475922107697
+      },
+      "C5_flow": {
+        "first20_mean": 0.5433858528733253,
+        "last20_mean": 0.11479255706071853,
+        "last": 0.14143459498882294
+      },
+      "evaluations": [
+        {
+          "arm": "state",
+          "step": 15000,
+          "new_updates": 0,
+          "successes": 0,
+          "episodes": 27,
+          "metrics": {
+            "eval/success_at_end": 0.0,
+            "eval/episode_len": 450.0,
+            "eval/return": 0.0,
+            "eval/fail_once": 0.0,
+            "eval/success_once": 0.0,
+            "eval/baseline_success_at_end": 0.0,
+            "eval/reward": 0.0,
+            "eval/num_trajectories": 27.0
+          },
+          "action_errors": {
+            "valid_controls": 637,
+            "translation_target_error_mm_mean": 26.38390593081397,
+            "translation_target_error_mm_p95": 49.877016192424925,
+            "rotation_target_error_deg_mean": 8.458051689205387,
+            "rotation_target_error_deg_p95": 20.211952900771955,
+            "binary_gripper_accuracy": 0.8210361067503925,
+            "raw_action_mse_per_dim": [
+              0.0006691143251935653,
+              0.001058180730379073,
+              0.0018411715612435544,
+              0.0012776392174507136,
+              0.00028214944719465136,
+              0.12242358664929238,
+              0.7158555729984302
+            ],
+            "raw_action_mse_real7": 0.120486773561312,
+            "checkpoint": "/workspace/exp_data/rlinf_stack_cube_sft_gpu56_20261103_192328/training/checkpoints/global_step_15000/actor",
+            "config_name": "pi05_embodichain_stack_cube",
+            "samples": 128,
+            "executed_chunk": 5,
+            "seed": 0,
+            "batch_size": 4,
+            "normalization_sha256": "8cd55a9435edcf855d17a0967a65426663dc510588812d422b6884fae093f2a4",
+            "batches_sha256": "4b87556bde95057080c0e147444a91b2adfb36e2e714fc17a47a695730327e58",
+            "metric_scope": "Decoded commands on fixed expert states; independent closed-loop evaluation is required."
+          }
+        },
+        {
+          "arm": "state",
+          "step": 15100,
+          "new_updates": 100,
+          "successes": 0,
+          "episodes": 27,
+          "metrics": {
+            "eval/success_once": 0.0,
+            "eval/episode_len": 450.0,
+            "eval/success_at_end": 0.0,
+            "eval/fail_once": 0.0,
+            "eval/baseline_success_at_end": 0.0,
+            "eval/return": 0.0,
+            "eval/reward": 0.0,
+            "eval/num_trajectories": 27.0
+          },
+          "action_errors": {
+            "valid_controls": 637,
+            "translation_target_error_mm_mean": 17.210392741696822,
+            "translation_target_error_mm_p95": 39.9089779398722,
+            "rotation_target_error_deg_mean": 3.330402629562587,
+            "rotation_target_error_deg_p95": 12.569897246730614,
+            "binary_gripper_accuracy": 0.9795918367346939,
+            "raw_action_mse_per_dim": [
+              0.0002818738304445269,
+              0.00025618491044727466,
+              0.0013016039670647908,
+              0.00019009062112356463,
+              8.57509271600112e-05,
+              0.031073026834886396,
+              0.08163265306122448
+            ],
+            "raw_action_mse_real7": 0.01640302630747872,
+            "checkpoint": "/workspace/exp_data/rlinf_ods_state_ab_gpu45_20261106_225501/state/run/checkpoints/global_step_15100/actor",
+            "config_name": "pi05_embodichain_stack_cube",
+            "samples": 128,
+            "executed_chunk": 5,
+            "seed": 0,
+            "batch_size": 4,
+            "normalization_sha256": "8cd55a9435edcf855d17a0967a65426663dc510588812d422b6884fae093f2a4",
+            "batches_sha256": "4b87556bde95057080c0e147444a91b2adfb36e2e714fc17a47a695730327e58",
+            "metric_scope": "Decoded commands on fixed expert states; independent closed-loop evaluation is required."
+          }
+        },
+        {
+          "arm": "state",
+          "step": 15200,
+          "new_updates": 200,
+          "successes": 1,
+          "episodes": 27,
+          "metrics": {
+            "eval/return": 1.703703761100769,
+            "eval/baseline_success_at_end": 0.03703703731298447,
+            "eval/fail_once": 0.0,
+            "eval/success_once": 0.03703703731298447,
+            "eval/reward": 0.003786008106544614,
+            "eval/success_at_end": 0.03703703731298447,
+            "eval/episode_len": 450.0,
+            "eval/num_trajectories": 27.0
+          },
+          "action_errors": {
+            "valid_controls": 637,
+            "translation_target_error_mm_mean": 13.581140340713393,
+            "translation_target_error_mm_p95": 36.35964730386155,
+            "rotation_target_error_deg_mean": 2.739384597981892,
+            "rotation_target_error_deg_p95": 10.241053088964332,
+            "binary_gripper_accuracy": 0.9748822605965463,
+            "raw_action_mse_per_dim": [
+              0.00017326557265673426,
+              0.00015086108687179165,
+              0.000950291984205935,
+              0.00012532888490560608,
+              7.605266012753812e-05,
+              0.025104668361702664,
+              0.10047095761381476
+            ],
+            "raw_action_mse_real7": 0.018150203737755007,
+            "checkpoint": "/workspace/exp_data/rlinf_ods_state_ab_gpu45_20261106_225501/state/run/checkpoints/global_step_15200/actor",
+            "config_name": "pi05_embodichain_stack_cube",
+            "samples": 128,
+            "executed_chunk": 5,
+            "seed": 0,
+            "batch_size": 4,
+            "normalization_sha256": "8cd55a9435edcf855d17a0967a65426663dc510588812d422b6884fae093f2a4",
+            "batches_sha256": "4b87556bde95057080c0e147444a91b2adfb36e2e714fc17a47a695730327e58",
+            "metric_scope": "Decoded commands on fixed expert states; independent closed-loop evaluation is required."
+          }
+        }
+      ]
+    }
+  }
+}

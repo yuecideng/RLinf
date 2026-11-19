@@ -1,0 +1,425 @@
+{
+  "date": "2026-11-06",
+  "source_gate": {
+    "accepted": 8,
+    "requests": 8,
+    "physical_steps": [
+      411,
+      442,
+      401,
+      396,
+      385,
+      368,
+      373,
+      366
+    ],
+    "capacity": 600,
+    "admission_deadline": 450,
+    "minimum_extra_settling_controls": 20,
+    "final_stable_controls": 20
+  },
+  "hardware": {
+    "gpu_model": "NVIDIA RTX PRO 5000 72GB Blackwell",
+    "producer_gpu": 0,
+    "training_gpus": [
+      4,
+      5
+    ],
+    "eval_model_gpu": 4,
+    "nodes": 1,
+    "fsdp_strategy": "no_shard",
+    "torch": "2.7.1+cu128",
+    "python": "3.11.14"
+  },
+  "sdk": {
+    "base": "c45fee8e5bc1abdbfedc22112fc267edf8242a4f",
+    "revision": "af0401eb50c40d86d0e1b23eb13306cf1bb0bd77",
+    "pr": "https://github.com/DexForce/EmbodiChain/pull/1101"
+  },
+  "calibration": {
+    "candidates": [
+      {
+        "producer_envs": 1,
+        "passed": true,
+        "recipe_path": "/workspace/exp_data/rlinf_ods_sft_20261106_050913/native_norm_alternatives/p1-recipe.json",
+        "measurement": {
+          "norm_stats_sha256": "8cd55a9435edcf855d17a0967a65426663dc510588812d422b6884fae093f2a4",
+          "schema_sha256": "eda5016bd4e0c64e7a5b725a3fe5e5c16d982b6cdd62a82cfa60ce68741882e4",
+          "rates": {
+            "accepted_episodes_per_active_second": 0.038793694705316656,
+            "accepted_episodes_per_wall_second": 0.023434308871969664,
+            "training_chunks_per_active_second": 6.197818702687601,
+            "training_chunks_per_wall_second": 5.061810716345447,
+            "window_seconds": 341.37981383223087
+          },
+          "first_publication_p95_seconds": 39.89143574703485,
+          "publication_cycles": 2,
+          "completed_updates": 54,
+          "completed_chunks": 1728,
+          "learner_active_seconds": 278.80776816699654,
+          "producer_active_seconds": 206.21907917689532,
+          "active_overlap_lower_bound_seconds": 143.647033511661,
+          "complete_generations": [
+            2
+          ],
+          "production_wall_rate_scope": "selected complete generations inside learner window",
+          "published_episodes_per_wall_second": 0.023434308871969664,
+          "window_start_monotonic": 3120283.16843251,
+          "window_end_monotonic": 3120624.548246342,
+          "bytes_per_episode": 314742000,
+          "owner_peak_rss_bytes": 5356974080
+        },
+        "sampled_gpu_memory_peak_bytes": {
+          "0": 6228541440,
+          "4": 42444259328,
+          "5": 37675335680
+        },
+        "producer_peak_rss_bytes": 6814253056,
+        "source_final": {
+          "successful_episodes": 16,
+          "failed_episodes": 1,
+          "completed_generation": 2,
+          "sampled_chunks": 1824
+        },
+        "producer_closed": true,
+        "input_admission_including_encoding_seconds": {
+          "rank": 0,
+          "post_warmup_mean": 1.3153624380076374,
+          "post_warmup_max": 1.6341980695724487
+        },
+        "complete_refill_wall_seconds": {
+          "2": 206.22705974522978
+        }
+      },
+      {
+        "producer_envs": 2,
+        "passed": true,
+        "recipe_path": "/workspace/exp_data/rlinf_ods_sft_20261106_050913/native_norm_recipe_check/p2-recipe.json",
+        "measurement": {
+          "norm_stats_sha256": "8cd55a9435edcf855d17a0967a65426663dc510588812d422b6884fae093f2a4",
+          "schema_sha256": "eda5016bd4e0c64e7a5b725a3fe5e5c16d982b6cdd62a82cfa60ce68741882e4",
+          "rates": {
+            "accepted_episodes_per_active_second": 0.07087359749676882,
+            "accepted_episodes_per_wall_second": 0.053688476472485924,
+            "training_chunks_per_active_second": 6.269876978025054,
+            "training_chunks_per_wall_second": 6.184912489630379,
+            "window_seconds": 186.25970891769975
+          },
+          "first_publication_p95_seconds": 70.65360866393894,
+          "publication_cycles": 2,
+          "completed_updates": 36,
+          "completed_chunks": 1152,
+          "learner_active_seconds": 183.735662444029,
+          "producer_active_seconds": 141.09626649692655,
+          "active_overlap_lower_bound_seconds": 138.5722200232558,
+          "complete_generations": [
+            2
+          ],
+          "production_wall_rate_scope": "selected complete generations inside learner window",
+          "published_episodes_per_wall_second": 0.053688476472485924,
+          "window_start_monotonic": 3118238.630533675,
+          "window_end_monotonic": 3118424.890242593,
+          "bytes_per_episode": 314742000,
+          "owner_peak_rss_bytes": 6300536832
+        },
+        "sampled_gpu_memory_peak_bytes": {
+          "0": 6205472768,
+          "4": 37674287104,
+          "5": 38730203136
+        },
+        "producer_peak_rss_bytes": 7382024192,
+        "source_final": {
+          "successful_episodes": 20,
+          "failed_episodes": 6,
+          "completed_generation": 2,
+          "sampled_chunks": 1248
+        },
+        "producer_closed": true,
+        "input_admission_including_encoding_seconds": {
+          "rank": 0,
+          "post_warmup_mean": 0.24061612784862518,
+          "post_warmup_max": 0.6045467257499695
+        },
+        "complete_refill_wall_seconds": {
+          "2": 141.10520717594773
+        }
+      },
+      {
+        "producer_envs": 4,
+        "passed": true,
+        "recipe_path": "/workspace/exp_data/rlinf_ods_sft_20261106_050913/native_norm_alternatives/p4-recipe.json",
+        "measurement": {
+          "norm_stats_sha256": "8cd55a9435edcf855d17a0967a65426663dc510588812d422b6884fae093f2a4",
+          "schema_sha256": "eda5016bd4e0c64e7a5b725a3fe5e5c16d982b6cdd62a82cfa60ce68741882e4",
+          "rates": {
+            "accepted_episodes_per_active_second": 0.06078522219430216,
+            "accepted_episodes_per_wall_second": 0.039219573665818144,
+            "training_chunks_per_active_second": 5.830565508862858,
+            "training_chunks_per_wall_second": 5.229276488775752,
+            "window_seconds": 305.9696696922183
+          },
+          "first_publication_p95_seconds": 102.8921873359941,
+          "publication_cycles": 2,
+          "completed_updates": 50,
+          "completed_chunks": 1600,
+          "learner_active_seconds": 274.4159203027375,
+          "producer_active_seconds": 197.4164042971097,
+          "active_overlap_lower_bound_seconds": 165.8626549076289,
+          "complete_generations": [
+            2
+          ],
+          "production_wall_rate_scope": "selected complete generations inside learner window",
+          "published_episodes_per_wall_second": 0.039219573665818144,
+          "window_start_monotonic": 3121247.335125623,
+          "window_end_monotonic": 3121553.304795315,
+          "bytes_per_episode": 314742000,
+          "owner_peak_rss_bytes": 7244992512
+        },
+        "sampled_gpu_memory_peak_bytes": {
+          "0": 7681867776,
+          "4": 38729154560,
+          "5": 37675335680
+        },
+        "producer_peak_rss_bytes": 8183480320,
+        "source_final": {
+          "successful_episodes": 24,
+          "failed_episodes": 20,
+          "completed_generation": 2,
+          "sampled_chunks": 1696
+        },
+        "producer_closed": true,
+        "input_admission_including_encoding_seconds": {
+          "rank": 0,
+          "post_warmup_mean": 0.7897845754027366,
+          "post_warmup_max": 30.954851150512695
+        },
+        "complete_refill_wall_seconds": {
+          "2": 197.42005271278322
+        }
+      },
+      {
+        "producer_envs": 8,
+        "passed": false,
+        "error": "RuntimeError: ODS candidate exited with status 1; see /workspace/exp_data/rlinf_ods_sft_20261106_050913/native_norm_alternatives/p8-pilot/run.log.",
+        "sampled_gpu_memory_peak_bytes": {
+          "0": 6424625152,
+          "4": 9437184,
+          "5": 10485760
+        },
+        "producer_peak_rss_bytes": 7209820160,
+        "source_final": {
+          "successful_episodes": 0,
+          "failed_episodes": 24,
+          "completed_generation": 0,
+          "sampled_chunks": 0
+        },
+        "producer_closed": true,
+        "source_failure": "RuntimeError: Failed to generate rollout 1 after 3 attempts."
+      }
+    ],
+    "selection": {
+      "producer_envs": 2,
+      "passed": true,
+      "recipe_path": "/workspace/exp_data/rlinf_ods_sft_20261106_050913/native_norm_recipe_check/p2-recipe.json",
+      "measurement": {
+        "norm_stats_sha256": "8cd55a9435edcf855d17a0967a65426663dc510588812d422b6884fae093f2a4",
+        "schema_sha256": "eda5016bd4e0c64e7a5b725a3fe5e5c16d982b6cdd62a82cfa60ce68741882e4",
+        "rates": {
+          "accepted_episodes_per_active_second": 0.07087359749676882,
+          "accepted_episodes_per_wall_second": 0.053688476472485924,
+          "training_chunks_per_active_second": 6.269876978025054,
+          "training_chunks_per_wall_second": 6.184912489630379,
+          "window_seconds": 186.25970891769975
+        },
+        "first_publication_p95_seconds": 70.65360866393894,
+        "publication_cycles": 2,
+        "completed_updates": 36,
+        "completed_chunks": 1152,
+        "learner_active_seconds": 183.735662444029,
+        "producer_active_seconds": 141.09626649692655,
+        "active_overlap_lower_bound_seconds": 138.5722200232558,
+        "complete_generations": [
+          2
+        ],
+        "production_wall_rate_scope": "selected complete generations inside learner window",
+        "published_episodes_per_wall_second": 0.053688476472485924,
+        "window_start_monotonic": 3118238.630533675,
+        "window_end_monotonic": 3118424.890242593,
+        "bytes_per_episode": 314742000,
+        "owner_peak_rss_bytes": 6300536832
+      }
+    },
+    "threshold_fraction": 0.95,
+    "rule": "smallest successful producer count at >=95% of best sustained training throughput",
+    "common_norm_stats_sha256": "8cd55a9435edcf855d17a0967a65426663dc510588812d422b6884fae093f2a4"
+  },
+  "selected_recipe": {
+    "configuration": {
+      "episode_sample_budget": 87,
+      "episode_sample_hard_limit": 128,
+      "balance_chunks_per_episode": 87.79611347208721,
+      "batch_size": 32,
+      "producer_envs": 2,
+      "buffer_size": 10,
+      "cache_bytes": 3147420000,
+      "initial_chunk_budget": 870,
+      "initial_max_updates": 27,
+      "initial_remainder_chunks": 6,
+      "refill_remaining_chunks": 571,
+      "active_chunks_per_second_cap": 6.357319143536737,
+      "training_chunks_per_second_target": 6.299672543745771,
+      "training_updates_per_second_target": 0.19686476699205535,
+      "publication_episodes_per_second_target": 0.07241002923845714,
+      "training_duty_fraction": 0.9909322469913167,
+      "producer_duty_fraction": 1.0,
+      "expected_training_throttle_fraction": 0.009067753008683297,
+      "expected_producer_throttle_fraction": 0.0,
+      "profile_id": "pi05-stack-cube-h1-h10-c5-provisional-v1",
+      "profile_scope": "PI0.5 Stack Cube; two cameras; H1/H10/C5; episode-uniform chunks; <=450 physical steps",
+      "profile_qualified": false,
+      "measurement_scope": "concurrent GPU0 producer and GPU4/5 two-rank FSDP run; completed generation and optimizer intervals",
+      "reasons": [
+        "Provisional profile: sampling bounds require independent qualification.",
+        "Refill sizing is a latency heuristic; validate subsequent publication spacing and remeasure after pacing changes."
+      ],
+      "end_of_supply_rule": "Stop when remaining unlocked per-episode quota cannot fund one full batch."
+    },
+    "profile": {
+      "profile_id": "pi05-stack-cube-h1-h10-c5-provisional-v1",
+      "scope": "PI0.5 Stack Cube; two cameras; H1/H10/C5; episode-uniform chunks; <=450 physical steps",
+      "qualified": false,
+      "min_chunks_per_episode": 32,
+      "max_chunks_per_episode": 128,
+      "hard_max_chunks_per_episode": 128,
+      "latency_safety_factor": 1.25
+    },
+    "measurement": {
+      "norm_stats_sha256": "8cd55a9435edcf855d17a0967a65426663dc510588812d422b6884fae093f2a4",
+      "schema_sha256": "eda5016bd4e0c64e7a5b725a3fe5e5c16d982b6cdd62a82cfa60ce68741882e4",
+      "rates": {
+        "accepted_episodes_per_active_second": 0.07241002923845714,
+        "accepted_episodes_per_wall_second": 0.06379363664683534,
+        "training_chunks_per_active_second": 6.357319143536737,
+        "training_chunks_per_wall_second": 5.869014571508851,
+        "window_seconds": 125.40435724472627
+      },
+      "first_publication_p95_seconds": 71.7325897612609,
+      "publication_cycles": 2,
+      "completed_updates": 23,
+      "completed_chunks": 736,
+      "learner_active_seconds": 115.77207048796117,
+      "producer_active_seconds": 110.48193301586434,
+      "active_overlap_lower_bound_seconds": 100.84964625909925,
+      "complete_generations": [
+        2
+      ],
+      "production_wall_rate_scope": "selected complete generations inside learner window",
+      "published_episodes_per_wall_second": 0.06379363664683534,
+      "window_start_monotonic": 3117823.45893554,
+      "window_end_monotonic": 3117948.863292785,
+      "bytes_per_episode": 314742000,
+      "owner_peak_rss_bytes": 5356892160
+    }
+  },
+  "normalization": {
+    "sha256": "8cd55a9435edcf855d17a0967a65426663dc510588812d422b6884fae093f2a4",
+    "train_episodes": 8,
+    "valid_task_program_frames": 2982,
+    "fixed_during_training": true,
+    "user_approved_replacement_of_constant_rotation_reference_stats": true,
+    "qualification": "provisional bootstrap; not accuracy-qualified"
+  },
+  "training": {
+    "passed": true,
+    "producer_envs": 2,
+    "training_gpus": [
+      4,
+      5
+    ],
+    "producer_gpu": 0,
+    "starting_global_step": 15000,
+    "saved_global_step": 15002,
+    "resumed_global_step": 15003,
+    "checkpoint": "/workspace/exp_data/rlinf_ods_sft_20261106_050913/native_norm_selected_recipe/training/run/checkpoints/global_step_15002",
+    "global_batch_size": 32,
+    "restored_model_optimizer_scheduler_rng": true,
+    "fresh_source_on_resume": true,
+    "checkpoint_recipe_note": "Saved with the earlier measured P2 recipe with identical cache 10 and per-episode quota 87; final native-statistics recheck changed refill 577 to 571 and rate 6.16 to 6.30. Both recipes were exercised through ODSFlowController."
+  },
+  "optimizer_audit": {
+    "adam_step_counts": {
+      "15002.0": 665,
+      "0.0": 2
+    },
+    "scheduler_and_rng_storage_verified": true,
+    "checkpoint_step": 15002
+  },
+  "training_losses": [
+    0.24560970067977905,
+    0.28563058376312256
+  ],
+  "resumed_update_loss": 0.3175945281982422,
+  "evaluation": {
+    "checkpoint": "/workspace/exp_data/rlinf_ods_sft_20261106_050913/native_norm_selected_recipe/training/run/checkpoints/global_step_15002",
+    "norm_stats": "/workspace/exp_data/rlinf_ods_sft_20261106_050913/native_train8_normalization/norm_stats.json",
+    "norm_stats_sha256": "8cd55a9435edcf855d17a0967a65426663dc510588812d422b6884fae093f2a4",
+    "validation_manifest": "/workspace/exp_data/rlinf_stack_cube_sft_gpu56_20261103_192328/evaluation_requests_27.json",
+    "validation_manifest_sha256": "42c31db9f43933f2fddf60e37b9a82a36c327521d4f90c6aecd3d690cc271d36",
+    "metrics": {
+      "eval/success_once": 0.0,
+      "eval/episode_len": 450.0,
+      "eval/fail_once": 0.0,
+      "eval/success_at_end": 0.0,
+      "eval/baseline_success_at_end": 0.0,
+      "eval/return": 0.0,
+      "eval/reward": 0.0,
+      "eval/num_trajectories": 27.0
+    },
+    "successes": 0,
+    "episodes": 27,
+    "control_steps": 450,
+    "stable_tail_steps": 20,
+    "result": "short integration run did not qualify policy accuracy",
+    "training_optimizer_updates_since15000": 2
+  },
+  "integration": {
+    "passed": true,
+    "double_rank_updates": 2,
+    "resumed_updates": 1,
+    "single_rank_gradient_accumulation": 2,
+    "production_failure_stopped_before_update2": true,
+    "all_producers_closed": true,
+    "temporary_checkpoint_removed_after_validation": "/workspace/exp_data/rlinf_ods_sft_20261106_050913/integration/ods_sft/ci-test/checkpoints/global_step_2/actor",
+    "slow_consumer_and_duplicate_request": {
+      "returncode": 0,
+      "checks": [
+        "slow consumer",
+        "duplicate request charges quota once",
+        "stop with uncommitted batch",
+        "existing session audit preservation"
+      ]
+    },
+    "source_session_files_are_immutable": true
+  },
+  "tests": {
+    "focused_cpu": 44,
+    "native_env_cpu": 53,
+    "stream_checkpoint_cpu": 4,
+    "ray_async_completion": 1,
+    "sdk_projection_cpu": 1,
+    "sdk_initial_focused": 498,
+    "sdk_creator_death_lifecycle_regression": 222,
+    "sdk_real_forkserver_creator_kill": 3,
+    "rlinf_sphinx_warnings_en": 0,
+    "rlinf_sphinx_warnings_zh": 0,
+    "sdk_sphinx_warnings": 854,
+    "sdk_baseline_sphinx_warnings": 854
+  },
+  "limits": [
+    "Only 2 new optimizer updates precede the reported 27-request policy evaluation; one further update verifies resume.",
+    "Reuse/normalization accuracy and full 15000-step native online SFT remain unqualified.",
+    "Full clean installer, Docker build, multi-node streaming and full remote GPU CI were not rerun.",
+    "Cancelled or quality-failed candidates are excluded."
+  ],
+  "local_evidence_root": "/workspace/exp_data/rlinf_ods_sft_20261106_050913"
+}

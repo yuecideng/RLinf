@@ -1,0 +1,97 @@
+id: RLinf-StackCube-RL-v1
+physics: default
+max_episodes: 1
+max_episode_steps: 450
+num_envs: 1
+arena_space: 2.5
+scene:
+  component: scene.yaml
+embodiment:
+  component: ../../../components/embodiments/isaaclab_panda.yaml
+rl_task:
+  success:
+    stacked:
+      func: StackCubeCompletion
+      params:
+        blue_entity_cfg:
+          uid: blue
+        red_entity_cfg:
+          uid: red
+        green_entity_cfg:
+          uid: green
+        gripper_part: hand
+        stable_steps: 20
+        require_stability: false
+  failure:
+    blue_dropped:
+      func: object_below_height
+      params:
+        entity_cfg:
+          uid: blue
+        height: -0.05
+    red_dropped:
+      func: object_below_height
+      params:
+        entity_cfg:
+          uid: red
+        height: -0.05
+    green_dropped:
+      func: object_below_height
+      params:
+        entity_cfg:
+          uid: green
+        height: -0.05
+env:
+  target_control_frequency: 20
+  rewards:
+    success:
+      func: StackCubeReward
+      mode: add
+      weight: 1.0
+      params: {}
+  events:
+    requests:
+      func: StackCubeReset
+      mode: reset
+      params:
+        arm_part: arm
+        contact_lift: 0.1
+        entity_cfgs:
+        - uid: blue
+        - uid: red
+        - uid: green
+        ground_plane_visible: false
+  dataset: {}
+  actions:
+    arm:
+      contract: eef_pose.relative_substep_dls@1
+      params:
+        part_name: arm
+        translation_scale: 0.5
+        rotation_scale: 0.5
+        damping: 0.01
+    gripper:
+      func: ParallelGripperAction
+      params:
+        part_name: hand
+        command_mode: binary
+        open_on_zero: false
+        open_command:
+          panda_finger_joint[1-2]: 0.04
+        close_command:
+          panda_finger_joint[1-2]: 0.0
+  observations:
+    eef_state:
+      func: stack_cube_state
+      mode: add
+      name: robot/eef_state
+      extra:
+        shape:
+        - 8
+      params:
+        link_name: panda_hand
+        offset:
+        - 0.0
+        - 0.0
+        - 0.1034
+        gripper_part: hand

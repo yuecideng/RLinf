@@ -1,0 +1,70 @@
+# Run the calibration tool first and pass its measured recipe to ODS_RECIPE.
+defaults:
+- embodichain_stack_cube_sft_openpi_pi05
+- _self_
+
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor:
+      node_group: policy
+      placement: "4-5"
+    data:
+      node_group: simulation
+      placement: "0"
+  node_groups:
+  - label: policy
+    node_ranks: all
+    env_configs:
+    - node_ranks: all
+      python_interpreter_path: ${oc.env:STACK_CUBE_MODEL_PYTHON}
+      env_vars:
+      - PYTHONPATH: ${oc.env:REPO_PATH}
+      - RLINF_PATH_ENV_MERGE_MODE: override
+      - JAX_PLATFORMS: cpu
+  - label: simulation
+    node_ranks: all
+    env_configs:
+    - node_ranks: all
+      python_interpreter_path: ${oc.env:STACK_CUBE_ENV_PYTHON}
+      env_vars:
+      - PYTHONPATH: ${oc.env:ODS_SIM_PYTHONPATH}
+      - RLINF_PATH_ENV_MERGE_MODE: override
+
+runner:
+  logger:
+    experiment_name: embodichain_stack_cube_ods_pi05
+
+data:
+  train_data_source: ods
+  train_data_paths: null
+  num_workers: 0
+  stateful_loader: false
+  ods:
+    gym_config_path: rlinf/envs/sim/embodichain/configs/tasks/manipulation/stack_cube/task.panda.formal_expert.yaml
+    panda_urdf: ${oc.env:STACK_CUBE_PANDA_URDF}
+    request_manifest: ${oc.env:STACK_CUBE_ODS_TRAIN_REQUESTS}
+    producer_envs: 2
+    seed: 0
+    recipe_path: ${oc.env:ODS_RECIPE,null}
+    calibration: false
+    calibration_refill_step: 4
+    max_wall_seconds: null
+    deadline_monotonic: null
+    data_timeout: 1800.0
+    idle_timeout: 1800.0
+    shutdown_timeout: 30.0
+    pilot_cache:
+      buffer_size: 8
+      episode_sample_budget: 64
+      episode_sample_hard_limit: 128
+    engine:
+      buffer_device: cpu
+      max_generation_attempts: 3
+      initialization_timeout: 1800.0
+      shutdown_timeout: 10.0
+    flow:
+      data_wait_timeout: 1800.0
+      generation_timeout: 1800.0
+      poll_interval: 0.02
+      max_generated_episodes: null

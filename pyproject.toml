@@ -76,6 +76,9 @@ Repository = "https://github.com/RLinf/RLinf"
 Documentation = "https://rlinf.readthedocs.io/"
 "Bug Report" = "https://github.com/RLinf/RLinf/issues"
 
+[project.entry-points."embodichain.init"]
+rlinf_stack_cube = "rlinf.envs.sim.embodichain:register_terms"
+
 [project.optional-dependencies]
 agentic = [
     "numpy==2.2",

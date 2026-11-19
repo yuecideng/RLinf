@@ -148,6 +148,8 @@ jobs:
               - 'tests/e2e_tests/reasoning/**'
               - '.github/workflows/agent-e2e-tests.yml'
             sft_filter: &sft
+              - 'rlinf/workers/data/**'
+              - 'toolkits/ods/**'
               - *shared
               - 'rlinf/workers/sft/**'
               - 'rlinf/runners/sft_runner.py'
@@ -186,6 +188,7 @@ jobs:
               # test_data.py loads this script to test reward split preprocessing.
               - 'examples/reward/preprocess_reward_dataset.py'
               - 'tests/unit_tests/**'
+              - 'tests/fixtures/**'
               - 'tests/conftest.py'
               - '.github/workflows/unit-tests.yml'
             scheduler_test_filter: &scheduler

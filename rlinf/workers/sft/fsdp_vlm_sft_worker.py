@@ -18,7 +18,6 @@ import os
 from typing import Any
 
 import torch
-from omegaconf import DictConfig
 
 from rlinf.config import SupportedModel
 from rlinf.hybrid_engines.fsdp.utils import generate_with_kv_cache
@@ -27,9 +26,6 @@ from rlinf.workers.sft.utils import vlm_extract_answer, vlm_normalize_text
 
 
 class FSDPVlmSftWorker(FSDPSftWorker):
-    def __init__(self, cfg: DictConfig):
-        super().__init__(cfg)
-
     def _save_data_state(self, save_path: str):
         state = {
             "data_epoch": self._data_epoch,
@@ -38,9 +34,15 @@ class FSDPVlmSftWorker(FSDPSftWorker):
         with open(os.path.join(save_path, "data_state.json"), "w") as f:
             json.dump(state, f)
 
-    def save_checkpoint(self, save_path: str, step: int = 0):
-        super().save_checkpoint(save_path, step)
-        if self._rank == 0:
+    def save_checkpoint(
+        self, save_path: str, step: int = 0, *, force_training_state: bool = False
+    ):
+        super().save_checkpoint(
+            save_path, step, force_training_state=force_training_state
+        )
+        if self._rank == 0 and self._should_save_training_state(
+            step, force_training_state
+        ):
             self._save_data_state(save_path)
 
     def _load_data_state(self, load_path: str):

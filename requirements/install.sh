@@ -11,6 +11,7 @@ PYTHON_VERSION="3.11.14"
 # Set by --python; MUSA only defaults PYTHON_VERSION when it is unset.
 USER_SET_PYTHON=0
 LEROBOT_COMMIT="0cf864870cf29f4738d3ade893e6fd13fbd7cdb5"
+EMBODICHAIN_COMMIT="fb96705b0869d3c4ef85cb5bdd56784e54debedf"
 TORCH_VERSION=""
 SGLANG_VERSION=""
 ENGINE=""
@@ -595,7 +596,8 @@ configure_nvidia() {
     _rest=${_torch_ver#*.}
     _tmin=${_rest%%.*}
     if [ -n "$_torch_ver" ] && [[ "$_tmaj" =~ ^[0-9]+$ ]] && [[ "$_tmin" =~ ^[0-9]+$ ]] \
-        && { [ "$_tmaj" -gt 2 ] || { [ "$_tmaj" -eq 2 ] && [ "$_tmin" -ge 11 ]; }; }; then
+        && { { [ "$_uvtb_user_set" -eq 1 ] && [[ "$UV_TORCH_BACKEND" =~ ^cu[0-9]+$ ]]; } \
+            || [ "$_tmaj" -gt 2 ] || { [ "$_tmaj" -eq 2 ] && [ "$_tmin" -ge 11 ]; }; }; then
         local _cpu_only=0
         # An explicit UV_TORCH_BACKEND=cuXXX wins over driver detection, for
         # hosts with CUDA forward-compatibility libraries installed.
@@ -1056,6 +1058,11 @@ apply_env_default_torch() {
     case "$ENV_NAME" in
         behavior) env_torch="2.5.1" ;;
         simple) env_torch="2.7.0" ;;
+        embodichain)
+            if [[ "$PYTHON_VERSION" == "3.11" || "$PYTHON_VERSION" == 3.11.* ]]; then
+                env_torch="2.7.1"
+            fi
+            ;;
     esac
     if [ -n "$env_torch" ]; then
         TORCH_VERSION="$env_torch"
@@ -1579,7 +1586,7 @@ apply_model_default_torch() {
     local model_torch="-"
     case "$MODEL" in
         openpi)
-            if [ "$ENV_NAME" = "yam" ]; then
+            if [ "$ENV_NAME" = "yam" ] || [ "$ENV_NAME" = "embodichain" ]; then
                 # OpenPI 0.1.1 requires torch 2.7.1; sync its matching vision/codec stack.
                 model_torch="2.7.1"
             fi
@@ -2498,6 +2505,37 @@ EOF
             )
             uv pip install "rlinf-openpi==0.1.1" "${yam_openpi_deps[@]}"
             install_flash_attn
+            ;;
+        embodichain)
+            if [[ "$PYTHON_VERSION" != "3.11" && "$PYTHON_VERSION" != 3.11.* ]]; then
+                echo "[install.sh] OpenPI/EmbodiChain requires --python 3.11 with the SDK's Torch 2.7 profile." >&2
+                return 1
+            fi
+            if [ "${TORCH_VERSION%%+*}" != "2.7.1" ]; then
+                echo "[install.sh] OpenPI/EmbodiChain requires --torch 2.7.1 for the published OpenPI package." >&2
+                return 1
+            fi
+            create_and_sync_venv
+            install_common_embodied_deps
+            # The stock package and OpenPI fork share transformers/. Match the
+            # distribution versions and install the fork's files last.
+            uv pip uninstall transformers
+            uv pip install -r "$SCRIPT_DIR/embodied/models/openpi_embodichain.txt"
+            uv pip install --reinstall --no-deps "rlinf-transformer-openpi==4.53.2"
+            local simulator_venv="${VIRTUAL_ENV}-embodichain"
+            # SDK LeRobot/NumPy requirements differ from the model reader.
+            # Keep the model active in the caller while building its env worker.
+            (
+                VENV_DIR="$simulator_venv"
+                MODEL=""
+                create_and_sync_venv
+                install_common_embodied_deps
+                install_embodichain_env
+                # SDK forkserver children discover RLinf functors through installed hooks.
+                uv pip install --no-deps -e "$(dirname "$SCRIPT_DIR")"
+                uv pip check
+            )
+            echo "[install.sh] EmbodiChain env interpreter: $simulator_venv/bin/python"
             ;;
         behavior)
             PYTHON_VERSION="3.10"
@@ -3877,12 +3915,41 @@ install_frankasim_env() {
 }
 
 install_embodichain_env() {
-    # Only dexsim-engine needs wheels from the vendor package server.
-    # TensorDict 0.15 rejects get_proprioception()[:, active_joint_ids]: the
-    # joint axis is a feature dim, and CartPole init fails with IndexError.
-    uv pip install "embodichain==0.3.0" "tensordict>=0.6,<0.15" \
+    local revision="${1:-$EMBODICHAIN_COMMIT}"
+    local requirements="${2:-$SCRIPT_DIR/embodied/envs/embodichain.txt}"
+    local repository="${3:-https://github.com/DexForce/EmbodiChain.git}"
+    local source_dir="${EMBODICHAIN_INSTALL_PATH:-$VIRTUAL_ENV/embodichain-source}"
+    local existing=0
+    if [ -e "$source_dir" ]; then
+        existing=1
+        if [ ! -d "$source_dir/.git" ] \
+            || [ -n "$(git -C "$source_dir" status --porcelain)" ] \
+            || [ "$(git -C "$source_dir" rev-parse HEAD)" != "$revision" ]; then
+            echo "[install.sh] Existing EmbodiChain source must be clean at $revision: $source_dir" >&2
+            return 1
+        fi
+    fi
+    source_dir=$(clone_or_reuse_repo EMBODICHAIN_INSTALL_PATH "$source_dir" \
+        "$repository" --no-checkout)
+    if [ "$existing" -eq 0 ]; then
+        git -C "$source_dir" fetch --depth 1 origin "$revision"
+        git -C "$source_dir" checkout --detach "$revision"
+    fi
+    # Resolve SDK constraints in its own project while preserving the Torch ABI.
+    pushd "$source_dir" >/dev/null
+    local torch_constraints
+    local sdk_requirements=()
+    if [ -n "$requirements" ]; then
+        sdk_requirements=(-r "$requirements")
+    fi
+    torch_constraints=$(mktemp)
+    uv pip freeze | grep -E '^torch(vision|audio)?==' > "$torch_constraints"
+    uv pip install -c "$torch_constraints" "${sdk_requirements[@]}" \
+        "${RAY_COMPAT_DEPS[@]}" . \
         --find-links http://pyp.open3dv.site:2345/simple/dexsim-engine/ \
         --trusted-host pyp.open3dv.site
+    rm -f "$torch_constraints"
+    popd >/dev/null
 }
 
 install_dosw1_env() {
