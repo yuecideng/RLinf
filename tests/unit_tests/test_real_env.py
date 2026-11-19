@@ -5078,6 +5078,42 @@ def test_embodichain_constructor_preserves_vendor_package_config_fallback(
         env.close()
 
 
+def test_embodichain_source_schema_tracks_rendering_runtime(tmp_path, monkeypatch):
+    pytest.importorskip("embodichain")
+    import importlib.metadata
+
+    from rlinf.envs.sim.embodichain.ods import prepare_stack_cube_source
+
+    asset = tmp_path / "panda.urdf"
+    asset.write_text('<robot name="panda"/>')
+    requests = tmp_path / "requests.json"
+    requests.write_text('{"requests": []}')
+    cfg = OmegaConf.create(
+        {
+            "gym_config_path": f"{_EMBODICHAIN_CONFIG_PREFIX}/tasks/manipulation/stack_cube/task.panda.formal_expert.yaml",
+            "panda_urdf": str(asset),
+            "request_manifest": str(requests),
+            "producer_envs": 1,
+        }
+    )
+    runtime_version = importlib.metadata.version
+    metadata = []
+    for release in ("0.5.1rc1", "0.6.0"):
+        monkeypatch.setattr(
+            importlib.metadata,
+            "version",
+            lambda name, release=release: release
+            if name == "dexsim-engine"
+            else runtime_version(name),
+        )
+        _, contract = prepare_stack_cube_source(cfg, tmp_path / release)
+        assert contract["schema"]["runtime"]["dexsim-engine"] == release
+        metadata.append(contract)
+    assert metadata[0]["schema_sha256"] != metadata[1]["schema_sha256"]
+    for key in ("scene_sha256", "request_manifest_sha256", "execution_policy_sha256"):
+        assert metadata[0][key] == metadata[1][key]
+
+
 def test_embodichain_constructor_preserves_authored_simulation_config(
     tmp_path, embodichain_sdk_boundary
 ):

@@ -465,7 +465,7 @@ RUN echo "source ${UV_PATH}/embodichain/bin/activate" >> ~/.bashrc
 FROM embodied-common-image AS embodied-embodichain-openpi-image
 
 RUN if [ "${RLINF_PLATFORM}" = "nvidia" ]; then export UV_TORCH_BACKEND=cu128; fi && \
-    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} --torch 2.7.1 embodied --venv openpi --model openpi --env embodichain
+    bash requirements/install.sh ${INSTALL_MIRROR_OPTION} --platform ${RLINF_PLATFORM} embodied --venv openpi --model openpi --env embodichain
 
 RUN echo "source ${UV_PATH}/openpi/bin/activate" >> ~/.bashrc
 RUN echo "export STACK_CUBE_MODEL_PYTHON=\"${UV_PATH}/openpi/bin/python\"" >> ~/.bashrc && \

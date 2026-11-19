@@ -133,3 +133,30 @@ budgets differ: offline fixes 120 demonstrations while ODS generates fresh
 demonstrations continuously. Both experiments use one seed and 27 frozen
 validation requests. Historical pilot checkpoints were removed during the
 user-requested cache cleanup; their audit identities remain in the records.
+
+
+SDK Main and DexSim 0.6 Migration (2026-11-19)
+---------------------------------------------
+
+``sdk_main_dexsim060.json`` records installation, CPU and GPU checks for the
+official main pin fb96705b0 and DexSim 0.6.0. The training pipeline passes:
+two-rank ODS updates, full checkpoint save/resume, single-rank accumulation,
+slow consumption and source failure cleanup. The final source schema includes
+the installed SDK/DexSim versions; a fresh schema-v2 checkpoint resumes, while
+the legacy schema is rejected before delivering any optimizer batch.
+
+Nine source attempts yielded eight qualified demonstrations at 343–417 controls.
+The unstable attempt was rejected; capacity 600 and the 450-control/final-20
+admission contract are unchanged. This is a source check, not a learned-policy
+success rate or a new concurrency benchmark.
+
+The existing native offline step-5000 policy scores 1/27 on the new runtime,
+compared with its archived 17/27. At identical 27-row resets, state, joint and
+object poses match exactly; front/wrist images differ by 30.29/19.77 pixel levels
+on average. The old/new model interpreters produce identical actions on two
+fixed contexts with identical noise. These checks demonstrate an RGB shift;
+they do not exclude dynamic physics differences. Recollect new-runtime images,
+recalibrate supply throughput and requalify the policy before PPO.
+
+.. image:: sdk_main_dexsim060_rgb.png
+   :alt: Old and new runtime RGB at identical calibrated reset states

@@ -37,6 +37,8 @@ from rlinf.envs.sim.embodichain.stack_cube_terms import StackCubeReset
 
 def prepare_stack_cube_source(cfg: Any, output: Path) -> tuple[str, dict[str, Any]]:
     """Materialize immutable SDK input paths and the policy schema for one run."""
+    from importlib.metadata import version
+
     import yaml
     from embodichain.data_pipeline.datasets import data_schema_fingerprint
     from embodichain.data_pipeline.engine import data as sdk_engine
@@ -79,7 +81,12 @@ def prepare_stack_cube_source(cfg: Any, output: Path) -> tuple[str, dict[str, An
     task = output / "task.yaml"
     task.write_text(yaml.safe_dump(raw, sort_keys=False))
     schema = {
-        "version": "rlinf-stack-cube-ods-v1",
+        "version": "rlinf-stack-cube-ods-v2",
+        # Rendering changes can shift RGB even when camera geometry is identical.
+        "runtime": {
+            "embodichain": version("embodichain"),
+            "dexsim-engine": version("dexsim-engine"),
+        },
         "instruction": STACK_PROMPT,
         "observation": {
             "timing": "pre_action",

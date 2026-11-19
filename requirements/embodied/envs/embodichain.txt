@@ -1,0 +1,8 @@
+# Keep the SDK's Python 3.11 profile separate from the OpenPI model reader.
+lerobot==0.4.4; python_version < '3.12'
+packaging>=24.2,<26; python_version < '3.12'
+# Ray accepts this version; virtualenv21 requires packaging>=26.3.
+virtualenv==20.35.4; python_version < '3.12'
+
+# Match the SDK's Python 3.11 / Torch 2.7 dependency profile.
+tensordict>=0.13,<0.15; python_version < '3.12'

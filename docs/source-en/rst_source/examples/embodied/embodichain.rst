@@ -99,8 +99,8 @@ Switch to the EmbodiChain virtual environment inside the image:
 
 **Custom environment**
 
-Install EmbodiChain 0.3.0 and its dependencies. The installer gets
-``dexsim-engine==0.5.0`` from ``http://pyp.open3dv.site:2345/simple/dexsim-engine/``
+Install the pinned EmbodiChain main snapshot (version 0.3.2) and its dependencies.
+The installer gets ``dexsim-engine==0.6.0`` from ``http://pyp.open3dv.site:2345/simple/dexsim-engine/``
 and resolves the remaining packages through your configured Python package index.
 Your machine must be able to reach the vendor server on port 2345.
 
@@ -116,12 +116,12 @@ Your machine must be able to reach the vendor server on port 2345.
    ``libpython3.11.so`` runtime errors with UV's Python layout, use a Conda
    environment and rerun ``bash requirements/install.sh embodied --env embodichain --no-root``.
 
-Use the installed package configs by default. To point at a local EmbodiChain
-checkout, set:
+Use the installed package configs by default. To reuse a clean checkout at the
+pinned revision, set this path before installation:
 
 .. code:: bash
 
-   export EMBODICHAIN_PATH=/path/to/EmbodiChain
+   export EMBODICHAIN_INSTALL_PATH=/path/to/EmbodiChain
 
 If a run fails because task resources are missing, download them in the same
 Python environment:
@@ -193,7 +193,7 @@ Evaluation and CI
 -----------------
 
 EmbodiChain CartPole is also covered by embodied e2e configs under
-``tests/e2e_tests/embodied/``. Set ``EMBODICHAIN_PATH`` only when you need a
+``tests/e2e_tests/embodied/``. Set ``EMBODICHAIN_INSTALL_PATH`` only when you need a
 non-default checkout.
 
 Train PI 0.5 for Three-Block Stacking
@@ -218,6 +218,7 @@ The following setup selects Torch 2.7.1 with CUDA 12.8 and the public base weigh
    export STACK_RUN=/path/to/new_stack_cube_run
    export STACK_MODEL_GPU=0
    export STACK_SIM_GPU=1
+   export SDL_VIDEODRIVER=dummy
    export STACK_CUBE_MODEL_VENV="$REPO_PATH/.venv"
    bash requirements/install.sh --torch 2.7.1 --no-root embodied \
      --venv "$STACK_CUBE_MODEL_VENV" --model openpi --env embodichain
@@ -230,13 +231,31 @@ The following setup selects Torch 2.7.1 with CUDA 12.8 and the public base weigh
      --local-dir "$PI05_BASE_MODEL"
 
 The installer pins EmbodiChain to commit
-``af0401eb50c40d86d0e1b23eb13306cf1bb0bd77`` and DexSim to ``0.5.1rc1``.
-This commit in ``yuecideng/EmbodiChain`` is based on main
-``c45fee8e5bc1abdbfedc22112fc267edf8242a4f`` and includes the online-source
-extension points in `EmbodiChain PR #1101 <https://github.com/DexForce/EmbodiChain/pull/1101>`_.
-It reports version 0.3.2. Use Python 3.11 for this Torch recipe. Set the repository,
+``fb96705b0869d3c4ef85cb5bdd56784e54debedf`` from official
+``DexForce/EmbodiChain`` main and DexSim to ``0.6.0``. The snapshot includes the
+merged online-source extension points and uses the SDK's Python 3.11 dependency
+profile (Torch 2.7, LeRobot 0.4.4 and TensorDict 0.13–0.14) in the isolated
+simulator environment. Use Python 3.11 for this Torch recipe. Set the repository,
 output and model paths before running the commands. GPU variables identify
 physical ranks.
+
+The installer selects Torch 2.7.1 for Python 3.11 by default. The OpenPI pairing
+rejects other Python profiles before creating its environments.
+
+Headless OptiX camera runs use SDL's dummy video driver. DexSim 0.6 initializes
+SDL even when the viewer is hidden; this setting supports camera rendering on
+servers without X11 or Wayland and is also set in the GPU CI jobs.
+
+.. warning::
+
+   DexSim 0.6 changes RGB appearance in the calibrated scene. The earlier
+   5,000-update checkpoint scored 1/27 on the new runtime, compared with its
+   archived 17/27 result. Fixed-reset states and poses matched exactly across
+   runtimes; front/wrist RGB differed by 30.29/19.77 mean pixel levels, and
+   model outputs matched exactly when given identical inputs and noise.
+   Collect training images with the new runtime and requalify the learned
+   policy before PPO. Historical success rates do not qualify the new images.
+   Repeat throughput calibration before selecting producer concurrency.
 
 Prepare the Panda URDF and meshes from the pinned public asset source. The
 prepared copy includes the control TCP and independently actuated fingers.
@@ -473,7 +492,10 @@ commands at expert states; evaluate achieved behavior through the closed-loop
 entry below.
 
 Checkpoints contain ``ods_source.json`` with schema, encoder and normalization
-fingerprints plus supply audit metadata. Use a fresh
+fingerprints plus supply audit metadata. The source schema includes installed
+EmbodiChain and DexSim versions to detect changed rendering contracts. Earlier
+ODS schemas require a new training session rather than full-state resume;
+model weights can initialize a new experiment, with requalification before PPO. Use a fresh
 ``runner.logger.experiment_name`` for each source session so previous audit files
 remain intact. Resume with ``runner.resume_dir`` and a
 ``runner.max_steps`` larger than the saved global step. Training state and RNG

@@ -99,7 +99,7 @@ CartPole 使用基于状态的 MLP policy，三方块堆叠使用双相机 PI 0.
 
 **自定义环境**
 
-安装 EmbodiChain 0.3.0 及其依赖。安装脚本从 ``http://pyp.open3dv.site:2345/simple/dexsim-engine/`` 获取 ``dexsim-engine==0.5.0``，其余包通过配置的 Python 包索引解析。运行安装的机器需要能够访问厂商服务器的 2345 端口。
+安装固定的 EmbodiChain main 快照（版本 0.3.2）及其依赖。安装脚本从 ``http://pyp.open3dv.site:2345/simple/dexsim-engine/`` 获取 ``dexsim-engine==0.6.0``，其余包通过配置的 Python 包索引解析。运行安装的机器需要能够访问厂商服务器的 2345 端口。
 
 .. code:: bash
 
@@ -113,11 +113,11 @@ CartPole 使用基于状态的 MLP policy，三方块堆叠使用双相机 PI 0.
    ``libpython3.11.so`` 运行时错误，请使用 Conda 环境，并重新运行
    ``bash requirements/install.sh embodied --env embodichain --no-root``。
 
-默认使用已安装包中的配置。如需指向本地 EmbodiChain checkout，请设置：
+默认使用已安装包中的配置。若要复用已固定到目标 commit 的干净 checkout，在安装前设置：
 
 .. code:: bash
 
-   export EMBODICHAIN_PATH=/path/to/EmbodiChain
+   export EMBODICHAIN_INSTALL_PATH=/path/to/EmbodiChain
 
 如果运行时提示缺少任务资源，请在同一个 Python 环境中下载：
 
@@ -186,7 +186,7 @@ CartPole 使用基于状态的 MLP policy，三方块堆叠使用双相机 PI 0.
 ----------------------------------------
 
 EmbodiChain CartPole 也被 embodied e2e 配置覆盖，位于
-``tests/e2e_tests/embodied/``。仅当需要非默认 checkout 时设置 ``EMBODICHAIN_PATH``。
+``tests/e2e_tests/embodied/``。仅当需要非默认 checkout 时设置 ``EMBODICHAIN_INSTALL_PATH``。
 
 训练三色积木堆叠 PI 0.5
 ------------------------------------
@@ -205,6 +205,7 @@ EmbodiChain CartPole 也被 embodied e2e 配置覆盖，位于
    export STACK_RUN=/path/to/new_stack_cube_run
    export STACK_MODEL_GPU=0
    export STACK_SIM_GPU=1
+   export SDL_VIDEODRIVER=dummy
    export STACK_CUBE_MODEL_VENV="$REPO_PATH/.venv"
    bash requirements/install.sh --torch 2.7.1 --no-root embodied \
      --venv "$STACK_CUBE_MODEL_VENV" --model openpi --env embodichain
@@ -216,7 +217,15 @@ EmbodiChain CartPole 也被 embodied e2e 配置覆盖，位于
      --revision 22c30e5b34f9e7ab738b1b34fc2fc5ecfe2d28f0 \
      --local-dir "$PI05_BASE_MODEL"
 
-安装器将 EmbodiChain 固定到 commit ``af0401eb50c40d86d0e1b23eb13306cf1bb0bd77``，DexSim 固定到 ``0.5.1rc1``。该 commit 位于 ``yuecideng/EmbodiChain``，基于 main ``c45fee8e5bc1abdbfedc22112fc267edf8242a4f``，包含 `EmbodiChain PR #1101 <https://github.com/DexForce/EmbodiChain/pull/1101>`_ 中的在线源扩展接口，版本号为 0.3.2。此 Torch 配置使用 Python 3.11；运行前设置仓库、输出与模型路径。GPU 变量表示物理 rank。
+安装器将 EmbodiChain 固定到官方 ``DexForce/EmbodiChain`` main 的 commit ``fb96705b0869d3c4ef85cb5bdd56784e54debedf``，DexSim 固定到 ``0.6.0``。该快照已包含合入的在线源扩展接口；隔离的仿真环境使用 SDK 的 Python 3.11 依赖组合：Torch 2.7、LeRobot 0.4.4、TensorDict 0.13–0.14。此 Torch 配置使用 Python 3.11；运行前设置仓库、输出与模型路径。GPU 变量表示物理 rank。
+
+安装器默认给 Python 3.11 选择 Torch 2.7.1。OpenPI 组合会在创建环境之前拒绝其他 Python profile。
+
+无窗口 OptiX 相机渲染使用 SDL 的 dummy 视频驱动。DexSim 0.6 即使隐藏 viewer 也会初始化 SDL；该设置支持没有 X11 或 Wayland 的服务器，GPU CI job 也使用相同设置。
+
+.. warning::
+
+   DexSim 0.6 改变了校准场景的 RGB 外观。此前 5,000 次更新的 checkpoint 在新版 runtime 上为 1/27 成功，归档结果为 17/27。两版的固定 reset 状态和位姿完全一致，前相机与腕相机 RGB 的平均像素差分别为 30.29 和 19.77；给定相同输入和噪声时，模型输出完全一致。应使用新版 runtime 重新采集训练图像，并在 PPO 前重新验证 policy；历史成功率不能为新图像提供准入证明。生产并发与配方也需重新测量吞吐后选择。
 
 从固定的公开资产版本准备 Panda URDF 与 mesh。准备后的副本包含控制 TCP 和独立驱动的两个手指。
 
@@ -370,7 +379,7 @@ Evaluator 保存逐集物理测量和视频。根据 validation 结果选定 che
 
 使用 ``torch.save`` 保存 ``project_openpi_batch`` 返回的 packet，其中包含当前帧 ``front``/``wrist`` uint8 图像、``state[B,8]``、原始 ``actions[B,10,7]``、布尔 ``action_mask[B,10]`` 和 ``prompts``。工具报告 C5 的平移目标误差（毫米）、旋转目标之间的相对角度误差（度）、夹爪准确率和各维原始 MSE。这些指标比较专家状态下的命令，实际任务表现通过下方闭环入口评估。
 
-Checkpoint 的 ``ods_source.json`` 保存 schema、encoder、normalization 指纹及供数审计。每个源会话使用新的 ``runner.logger.experiment_name``，保留前次审计文件；恢复时设置 ``runner.resume_dir``，并让 ``runner.max_steps`` 大于已保存的 global step。训练状态与 RNG 通过现有 checkpoint 后端恢复；生产者重建源会话、缓存和配额。已交付 chunks 不退款，也不精确重放 batch 顺序。导出的权重使用现有 Ray 评估入口和离线基线相同的冻结 validation manifest 独立评估。
+Checkpoint 的 ``ods_source.json`` 保存 schema、encoder、normalization 指纹及供数审计。源 schema 包含已安装的 EmbodiChain 与 DexSim 版本，用于识别渲染契约变化。旧 ODS schema 需建立新的训练会话，不能恢复完整训练状态；模型权重可作为新实验的初始化，进入 PPO 前需重新验证。每个源会话使用新的 ``runner.logger.experiment_name``，保留前次审计文件；恢复时设置 ``runner.resume_dir``，并让 ``runner.max_steps`` 大于已保存的 global step。训练状态与 RNG 通过现有 checkpoint 后端恢复；生产者重建源会话、缓存和配额。已交付 chunks 不退款，也不精确重放 batch 顺序。导出的权重使用现有 Ray 评估入口和离线基线相同的冻结 validation manifest 独立评估。
 
 将模型与数据配方和 checkpoint 一起保留。从仅使用图像的配方切换到原生状态输入配方会改变 encoder 契约，应从明确的初始权重建立新实验；恢复 ODS checkpoint 时使用其保存的输入契约。
 

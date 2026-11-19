@@ -6,6 +6,8 @@ on:
 jobs:
   sft-embodichain-stack-cube-test:
     runs-on: embodied
+    env:
+      SDL_VIDEODRIVER: dummy
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -17,7 +19,7 @@ jobs:
           export UV_CACHE_DIR=/workspace/dataset/.uv_cache
           export UV_PYTHON_INSTALL_DIR=/workspace/dataset/.uv_python
           export UV_TORCH_BACKEND=cu128
-          bash requirements/install.sh --torch 2.7.1 --no-root embodied --model openpi --env embodichain
+          bash requirements/install.sh --no-root embodied --model openpi --env embodichain
 
       - name: SFT, checkpoint resume and PPO handoff
         timeout-minutes: 45
